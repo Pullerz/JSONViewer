@@ -43,7 +43,8 @@ struct SidebarView: View {
                         // File-backed, virtualized list
                         ScrollViewReader { proxy in
                             List(selection: $viewModel.selectedRowID) {
-                                ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
+                                let ids: [Int] = viewModel.sidebarFilteredRowIDs ?? Array(0..<viewModel.jsonlRowCount)
+                                ForEach(ids, id: \.self) { i in
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("Row \(i)")
                                             .font(.callout)
@@ -68,13 +69,15 @@ struct SidebarView: View {
                                 }
                             }
                             .onChange(of: viewModel.jsonlRowCount) { newCount in
-                                // If user had last row selected, keep them pinned to bottom
-                                let shouldPin = viewModel.selectedRowID == lastRowCount - 1
-                                lastRowCount = newCount
-                                if shouldPin && newCount > 0 {
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                        withAnimation(.easeInOut(duration: 0.15)) {
-                                            proxy.scrollTo(newCount - 1, anchor: .bottom)
+                                // If user had last row selected, keep them pinned to bottom (only when not filtering)
+                                if viewModel.sidebarFilteredRowIDs == nil {
+                                    let shouldPin = viewModel.selectedRowID == lastRowCount - 1
+                                    lastRowCount = newCount
+                                    if shouldPin && newCount > 0 {
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                            withAnimation(.easeInOut(duration: 0.15)) {
+                                                proxy.scrollTo(newCount - 1, anchor: .bottom)
+                                            }
                                         }
                                     }
                                 }
@@ -131,6 +134,18 @@ struct SidebarView: View {
         }
         .onAppear {
             lastRowCount = viewModel.jsonlRowCount
+        }
+        .onChange(of: viewModel.searchText) { _ in
+            if viewModel.jsonlIndex != nil {
+                viewModel.runSidebarSearch()
+            } else {
+                viewModel.sidebarFilteredRowIDs = nil
+            }
+        }
+        .onChange(of: viewModel.jsonlRowCount) { _ in
+            if viewModel.jsonlIndex != nil && !viewModel.searchText.isEmpty {
+                viewModel.runSidebarSearch()
+            }
         }
         .onChange(of: viewModel.selectedRowID) { _ in
             Task { _ = await viewModel.updateTreeForSelectedRow() }

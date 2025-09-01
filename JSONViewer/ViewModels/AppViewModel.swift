@@ -55,6 +55,10 @@ final class AppViewModel: ObservableObject {
     @Published var searchText: String = ""
     @Published var indexingProgress: Double?
 
+    // Sidebar (JSONL) search
+    @Published var sidebarFilteredRowIDs: [Int]? = nil
+    private var sidebarSearchTask: Task<Void, Never>?
+
     // Work management
     private var currentComputeTask: Task<Void, Never>?
     private var fileWatcher: FileWatcher?
@@ -445,6 +449,55 @@ final class AppViewModel: ObservableObject {
         }
         traverse(root, ancestors: [])
         expandedPaths = set
+    }
+
+    // MARK: - Sidebar filtering for file-backed JSONL
+
+    func runSidebarSearch() {
+        sidebarSearchTask?.cancel()
+        guard mode == .jsonl, let index = jsonlIndex else {
+            sidebarFilteredRowIDs = nil
+            return
+        }
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty {
+            sidebarFilteredRowIDs = nil
+            return
+        }
+        let query = q.lowercased()
+        let total = index.lineCount
+
+        sidebarSearchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            var matches: [Int] = []
+            var lastPublish = CFAbsoluteTimeGetCurrent()
+            for i in 0..<total {
+                if Task.isCancelled { return }
+                let line = (try? index.readLine(at: i, maxBytes: 4096)) ?? ""
+                if line.range(of: query, options: .caseInsensitive) != nil {
+                    matches.append(i)
+                }
+                // Throttle UI updates to ~10 per second
+                let now = CFAbsoluteTimeGetCurrent()
+                if now - lastPublish > 0.1 {
+                    lastPublish = now
+                    await MainActor.run {
+                        if self?.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == query {
+                            self?.sidebarFilteredRowIDs = matches
+                        }
+                    }
+                }
+            }
+            await MainActor.run {
+                if self?.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == query {
+                    self?.sidebarFilteredRowIDs = matches
+                }
+            }
+        }
+    }
+
+    func cancelSidebarSearch() {
+        sidebarSearchTask?.cancel()
+        sidebarSearchTask = nil
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {
