@@ -129,6 +129,8 @@ struct AppShellView: View {
             OpenWindowBridge.shared.openWindowHandler = { id in
                 openWindow(id: id)
             }
+            // Drain any pending open requests queued by the AppDelegate (e.g., Dock drops).
+            OpenRequests.shared.drain(into: viewModel, openWindow: openWindow)
             // Ensure no UI element steals focus on first launch so Cmd+V pastes into viewer.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 nsWindow?.makeFirstResponder(nil)
@@ -177,15 +179,28 @@ struct AppShellView: View {
         // Prefer file URLs (dragging from Finder)
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
-               provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url {
-                        DispatchQueue.main.async {
-                            viewModel.loadFile(url: url)
+               provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) ||
+               provider.hasItemConformingToTypeIdentifier(UTType.item.identifier) {
+                if provider.canLoadObject(ofClass: URL.self) {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        if let url {
+                            DispatchQueue.main.async {
+                                viewModel.loadFile(url: url)
+                            }
                         }
                     }
+                    return true
+                } else {
+                    // As a fallback, ask for a file representation and convert to URL
+                    _ = provider.loadInPlaceFileRepresentation(forTypeIdentifier: UTType.item.identifier) { url, _, _ in
+                        if let url {
+                            DispatchQueue.main.async {
+                                viewModel.loadFile(url: url)
+                            }
+                        }
+                    }
+                    return true
                 }
-                return true
             }
         }
         // Fallback: raw text drop
