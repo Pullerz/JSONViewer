@@ -7,6 +7,8 @@ struct JSONTextView: View {
     var onCopy: () -> Void
 
     @State private var highlighted: AttributedString?
+    @State private var highlightTask: Task<Void, Never>?
+    private let highlightLimit = 250_000 // bytes
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -58,9 +60,17 @@ struct JSONTextView: View {
     }
 
     private func updateHighlight() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = JSONSyntaxHighlighter.highlight(text)
-            DispatchQueue.main.async {
+        highlightTask?.cancel()
+        let size = text.utf8.count
+        if size > highlightLimit {
+            highlighted = nil
+            return
+        }
+        let currentText = text
+        let limit = highlightLimit
+        highlightTask = Task.detached(priority: .userInitiated) {
+            let result = JSONSyntaxHighlighter.highlight(currentText, limit: limit)
+            await MainActor.run {
                 self.highlighted = result
             }
         }
