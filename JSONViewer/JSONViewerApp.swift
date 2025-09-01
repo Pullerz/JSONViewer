@@ -11,7 +11,7 @@ import SwiftUI
 struct JSONViewerApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            AppShellView()
         }
     }
 }
