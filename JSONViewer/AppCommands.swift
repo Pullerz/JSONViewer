@@ -21,14 +21,13 @@ struct AppCommands: Commands {
             .keyboardShortcut("o", modifiers: [.command])
         }
 
-        // Provide default Paste (Cmd+V) that pastes JSON into the focused window when not editing text.
+        // Override Paste to either forward to the first responder (text fields) or paste JSON into the viewer.
         CommandGroup(before: .pasteboard) {
             Button("Paste") {
-                pasteFromClipboard()
+                handlePasteCommand()
             }
             .keyboardShortcut("v", modifiers: [.command])
-            .disabled(isTextInputFocused())
-            
+
             Button("Paste JSON") {
                 pasteFromClipboard()
             }
@@ -45,6 +44,17 @@ struct AppCommands: Commands {
         }
         #endif
         return false
+    }
+
+    private func handlePasteCommand() {
+        #if os(macOS)
+        if isTextInputFocused() {
+            // forward to native paste for text inputs
+            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        } else {
+            pasteFromClipboard()
+        }
+        #endif
     }
 
     private func pasteFromClipboard() {

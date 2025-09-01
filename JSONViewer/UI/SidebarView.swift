@@ -3,6 +3,7 @@ import SwiftUI
 struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var previews: [Int: String] = [:]
+    @FocusState private var isSearchFocused: Bool
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -16,6 +17,7 @@ struct SidebarView: View {
             HStack {
                 Image(systemName: "magnifyingglass")
                 TextField("Search", text: $viewModel.searchText)
+                    .focused($isSearchFocused)
             }
             .textFieldStyle(.roundedBorder)
             .padding([.top, .horizontal])
@@ -95,6 +97,8 @@ struct SidebarView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
         }
+        .onAppear { isSearchFocused = false }
+        .onChange(of: viewModel.mode) { _ in isSearchFocused = false }
         .onChange(of: viewModel.selectedRowID) { _ in
             Task { _ = await viewModel.updateTreeForSelectedRow() }
         }

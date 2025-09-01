@@ -45,17 +45,6 @@ struct AppShellView: View {
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
         }
         .toolbar {
-            // Center title with context menu to reveal in Finder
-            ToolbarItem(placement: .principal) {
-                Text(windowTitle)
-                    .font(.headline)
-                    .contextMenu {
-                        if let url = viewModel.fileURL {
-                            Button("Show in Finder") { revealInFinder(url) }
-                        }
-                    }
-            }
-
             ToolbarItemGroup {
                 Button {
                     openFile()
@@ -106,6 +95,8 @@ struct AppShellView: View {
             nsWindow = win
             nsWindow?.representedURL = viewModel.fileURL
             nsWindow?.title = windowTitle
+            // Ensure no text field is focused by default so Cmd+V pastes into the viewer.
+            nsWindow?.makeFirstResponder(nil)
             WindowRegistry.shared.register(viewModel)
         })
         .onAppear {
