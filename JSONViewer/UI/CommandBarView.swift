@@ -23,7 +23,7 @@ struct CommandBarView: View {
             .pickerStyle(.segmented)
             .frame(width: 90)
 
-            TextField(placeholder, text: $text, axis: .singleLine)
+            TextField(placeholder, text: $text)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 14))
                 .onSubmit { onRun() }
