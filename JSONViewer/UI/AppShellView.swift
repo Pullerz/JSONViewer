@@ -68,17 +68,7 @@ struct AppShellView: View {
                 .frame(width: 100)
                 .help("Toggle between raw text and tree")
 
-                if viewModel.presentation == .tree {
-                    Button("Expand All") {
-                        viewModel.expandAll()
-                    }
-                    .help("Expand all nodes")
-
-                    Button("Collapse All") {
-                        viewModel.collapseAll()
-                    }
-                    .help("Collapse all nodes")
-                }
+                
 
                 if viewModel.fileURL != nil {
                     Button {

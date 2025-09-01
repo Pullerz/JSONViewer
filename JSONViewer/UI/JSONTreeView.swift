@@ -47,15 +47,44 @@ struct JSONTreeView: View {
         Group {
             if let _ = root {
                 VStack(spacing: 8) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                        TextField("Find in tree", text: $viewModel.treeSearchQuery)
-                            .focused($findFocused)
-                            .onChange(of: viewModel.treeSearchQuery) { _ in
-                                viewModel.expandForSearchIfNeeded()
-                            }
+                    // In-view toolbar with find + expand/collapse, styled as a capsule group
+                    HStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                            TextField("Find in tree", text: $viewModel.treeSearchQuery)
+                                .textFieldStyle(.plain)
+                                .focused($findFocused)
+                                .onChange(of: viewModel.treeSearchQuery) { _ in
+                                    // Defer expansion to next runloop to avoid state-during-update warnings
+                                    DispatchQueue.main.async {
+                                        viewModel.expandForSearchIfNeeded()
+                                    }
+                                }
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.secondary.opacity(0.12))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+                        )
+
+                        Spacer(minLength: 6)
+
+                        Button("Expand All") {
+                            viewModel.expandAll()
+                        }
+                        .controlSize(.small)
+
+                        Button("Collapse All") {
+                            viewModel.collapseAll()
+                        }
+                        .controlSize(.small)
                     }
-                    .textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
 
                     ScrollView {
