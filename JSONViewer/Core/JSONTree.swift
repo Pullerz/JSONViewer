@@ -1,6 +1,6 @@
 import Foundation
 
-enum JSONScalar: Equatable {
+enum JSONScalar: Hashable {
     case string(String)
     case number(Double)
     case bool(Bool)
