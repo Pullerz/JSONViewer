@@ -20,7 +20,10 @@ struct JSONSyntaxHighlighter {
         let theme = Theme()
 
         func setColor(_ color: Color, range: NSRange) {
-            if let r = Range(range, in: text) {
+            if let stringRange = Range(range, in: text),
+               let lower = AttributedString.Index(stringRange.lowerBound, within: attr),
+               let upper = AttributedString.Index(stringRange.upperBound, within: attr) {
+                let r = lower..<upper
                 attr[r].foregroundColor = color
             }
         }
@@ -35,8 +38,8 @@ struct JSONSyntaxHighlighter {
             }
         }
 
-        // Strings (values)
-        if let stringRegex = try? NSRegularExpression(pattern: "\"(?:\\\\.|[^\"\\\\])*\"", options: []) {
+        // Strings (values) - avoid coloring keys by ensuring not followed by colon
+        if let stringRegex = try? NSRegularExpression(pattern: "\"(?:\\\\.|[^\"\\\\])*\"(?!\\s*:)", options: []) {
             stringRegex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
                 if let match {
                     setColor(theme.string, range: match.range)
