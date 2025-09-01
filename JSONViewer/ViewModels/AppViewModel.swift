@@ -64,6 +64,9 @@ final class AppViewModel: ObservableObject {
     private var currentComputeTask: Task<Void, Never>?
     private var fileWatcher: FileWatcher?
     private var fileChangeDebounce: Task<Void, Never>?
+    #if os(macOS)
+    private var securityScopedURL: URL?
+    #endif
 
     var selectedRow: JSONLRow? {
         guard let id = selectedRowID else { return nil }
@@ -96,6 +99,10 @@ final class AppViewModel: ObservableObject {
         fileWatcher?.cancel()
         fileWatcher = nil
         lastUpdatedAt = nil
+        #if os(macOS)
+        securityScopedURL?.stopAccessingSecurityScopedResource()
+        securityScopedURL = nil
+        #endif
     }
 
     func handlePaste(text: String) {
@@ -149,6 +156,12 @@ final class AppViewModel: ObservableObject {
     func loadFile(url: URL) {
         clear()
         fileURL = url
+        #if os(macOS)
+        if url.startAccessingSecurityScopedResource() {
+            securityScopedURL = url
+        }
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        #endif
         startWatchingFile(url)
         Task {
             await loadFromFile()

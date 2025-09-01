@@ -104,7 +104,7 @@ struct AppShellView: View {
                 .help("Clear current document")
             }
         }
-        .onDrop(of: [UTType.json.identifier, UTType.plainText.identifier, UTType.fileURL.identifier], isTargeted: nil) { providers in
+        .onDrop(of: [UTType.json.identifier, UTType.plainText.identifier, UTType.fileURL.identifier, UTType.url.identifier, UTType.item.identifier], isTargeted: nil) { providers in
             handleDrop(providers: providers)
         }
         .frame(minWidth: 1024, minHeight: 700)
@@ -174,26 +174,32 @@ struct AppShellView: View {
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                if let url {
-                    DispatchQueue.main.async {
-                        viewModel.loadFile(url: url)
+        // Prefer file URLs (dragging from Finder)
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
+               provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let url {
+                        DispatchQueue.main.async {
+                            viewModel.loadFile(url: url)
+                        }
                     }
                 }
+                return true
             }
-            return true
         }
-        if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-            _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
-                if let data, let text = String(data: data, encoding: .utf8) {
-                    DispatchQueue.main.async {
-                        viewModel.handlePaste(text: text)
+        // Fallback: raw text drop
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
+                    if let data, let text = String(data: data, encoding: .utf8) {
+                        DispatchQueue.main.async {
+                            viewModel.handlePaste(text: text)
+                        }
                     }
                 }
+                return true
             }
-            return true
         }
         return false
     }
