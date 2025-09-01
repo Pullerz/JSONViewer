@@ -18,7 +18,6 @@ struct JSONViewerApp: App {
         }
         .commands {
             AppCommands()
-                .environmentObject(viewModel)
         }
     }
 }
