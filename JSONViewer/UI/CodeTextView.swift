@@ -31,7 +31,7 @@ struct CodeTextView: NSViewRepresentable {
         textView.isGrammarCheckingEnabled = false
         textView.isContinuousSpellCheckingEnabled = false
         textView.textContainer?.widthTracksTextView = true
-        textView.maxSize = NSSize(width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isHorizontallyResizable = false
         textView.isVerticallyResizable = true
 
