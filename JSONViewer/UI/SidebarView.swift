@@ -13,13 +13,28 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                TextField("Search", text: $viewModel.searchText)
+        VStack(spacing: 10) {
+            // Styled, integrated search field matching tree viewer
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search", text: $viewModel.searchText)
+                        .textFieldStyle(.plain)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
             }
-            .textFieldStyle(.roundedBorder)
-            .padding([.top, .horizontal])
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
 
             Group {
                 switch viewModel.mode {

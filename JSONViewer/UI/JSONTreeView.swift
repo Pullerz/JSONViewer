@@ -145,6 +145,8 @@ struct JSONTreeView: View {
                     findFocused = true
                 }
                 .onAppear {
+                    // Do not focus search by default
+                    findFocused = false
                     // Ensure root has an entry to control expansion
                     if viewModel.expandedPaths.isEmpty {
                         viewModel.expandedPaths.insert("")

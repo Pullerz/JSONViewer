@@ -105,6 +105,10 @@ struct AppShellView: View {
             OpenWindowBridge.shared.openWindowHandler = { id in
                 openWindow(id: id)
             }
+            // Ensure no UI element steals focus on first launch so Cmd+V pastes into viewer.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                nsWindow?.makeFirstResponder(nil)
+            }
         }
         .onDisappear {
             WindowRegistry.shared.unregister(viewModel)

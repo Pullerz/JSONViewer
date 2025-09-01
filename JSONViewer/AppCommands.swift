@@ -67,6 +67,11 @@ struct AppCommands: Commands {
 
     private func handlePasteCommand() {
         #if os(macOS)
+        // If no document yet, always treat paste as "Paste JSON" to avoid search fields capturing it.
+        if let vm = viewModel, vm.mode == .none {
+            pasteFromClipboard()
+            return
+        }
         if isTextInputFocused() {
             // forward to native paste for text inputs
             NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
