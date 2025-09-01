@@ -95,6 +95,8 @@ struct AppShellView: View {
         #if os(macOS)
         .background(HostingWindowAccessor { win in
             nsWindow = win
+            // Apply initial title and proxy icon once the window is available
+            nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = viewModel.fileURL
             nsWindow?.title = windowTitle
             // Ensure no text field is focused by default so Cmd+V pastes into the viewer.
@@ -114,6 +116,8 @@ struct AppShellView: View {
             WindowRegistry.shared.unregister(viewModel)
         }
         .onChange(of: viewModel.fileURL) { newURL in
+            // Keep title and proxy icon in sync with the current file
+            nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = newURL
             nsWindow?.title = windowTitle
         }

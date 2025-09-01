@@ -103,20 +103,36 @@ struct JSONTreeView: View {
 
                         Spacer(minLength: 8)
 
-                        HStack(spacing: 8) {
-                            Button("Expand All") {
+                        // Compact icon group for expand/collapse
+                        HStack(spacing: 6) {
+                            Button {
                                 viewModel.expandAll()
+                            } label: {
+                                Image(systemName: "plus.square.on.square")
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(.accentColor)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .help("Expand All")
 
-                            Button("Collapse All") {
+                            Button {
                                 viewModel.collapseAll()
+                            } label: {
+                                Image(systemName: "minus.square.on.square")
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .help("Collapse All")
                         }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+                        )
                     }
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
