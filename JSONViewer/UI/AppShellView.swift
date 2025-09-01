@@ -98,7 +98,7 @@ struct AppShellView: View {
             // Apply initial title and proxy icon once the window is available
             nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = viewModel.fileURL
-            nsWindow?.title = windowTitle
+            nsWindow?.title = viewModel.fileURL?.lastPathComponent ?? "JSONViewer"
             // Ensure no text field is focused by default so Cmd+V pastes into the viewer.
             nsWindow?.makeFirstResponder(nil)
             WindowRegistry.shared.register(viewModel)
@@ -119,7 +119,7 @@ struct AppShellView: View {
             // Keep title and proxy icon in sync with the current file
             nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = newURL
-            nsWindow?.title = windowTitle
+            nsWindow?.title = newURL?.lastPathComponent ?? "JSONViewer"
         }
         #endif
     }
