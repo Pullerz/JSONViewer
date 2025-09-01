@@ -27,22 +27,42 @@ struct AppShellView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
             HStack(spacing: 0) {
-                Group {
-                    switch viewModel.presentation {
-                    case .text:
-                        JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
-                            viewModel.copyDisplayedText()
+                ZStack(alignment: .bottomLeading) {
+                    Group {
+                        switch viewModel.presentation {
+                        case .text:
+                            JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
+                                viewModel.copyDisplayedText()
+                            }
+                        case .tree:
+                            JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
+                                viewModel.didSelectTreeNode(node)
+                                withAnimation { isInspectorVisible = true }
+                            }
                         }
-                    case .tree:
-                        JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
-                            viewModel.didSelectTreeNode(node)
-                            withAnimation { isInspectorVisible = true }
+                    }
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if viewModel.mode != .none {
+                        CommandBarView(
+                            mode: $viewModel.commandMode,
+                            text: $viewModel.commandText,
+                            placeholder: viewModel.commandMode == .jq
+                                ? "jq filter (e.g. .items | length)"
+                                : "Use natural language to search or transform"
+                        ) {
+                            switch viewModel.commandMode {
+                            case .jq:
+                                viewModel.runJQ(filter: viewModel.commandText)
+                            case .ai:
+                                withAnimation { isAISidebarVisible = true }
+                                viewModel.runAI(prompt: viewModel.commandText)
+                            }
                         }
                     }
                 }
-                .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
-                .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if isInspectorVisible {
                     Divider()
                     InspectorView(viewModel: viewModel)
@@ -59,23 +79,7 @@ struct AppShellView: View {
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
             .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
         }
-        .overlay(alignment: .bottomLeading) {
-            CommandBarView(
-                mode: $viewModel.commandMode,
-                text: $viewModel.commandText,
-                placeholder: viewModel.commandMode == .jq
-                    ? "jq filter (e.g. .items | length)"
-                    : "Use natural language to search or transform"
-            ) {
-                switch viewModel.commandMode {
-                case .jq:
-                    viewModel.runJQ(filter: viewModel.commandText)
-                case .ai:
-                    withAnimation { isAISidebarVisible = true }
-                    viewModel.runAI(prompt: viewModel.commandText)
-                }
-            }
-        }
+        
         .toolbar {
             ToolbarItemGroup {
                 Button {
