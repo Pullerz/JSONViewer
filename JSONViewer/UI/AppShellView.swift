@@ -6,10 +6,11 @@ import AppKit
 
 struct AppShellView: View {
     @StateObject private var viewModel = AppViewModel()
-    @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     #if os(macOS)
     @State private var nsWindow: NSWindow?
     #endif
+    @State private var isInspectorVisible: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     private var displayText: String {
@@ -25,26 +26,33 @@ struct AppShellView: View {
             SidebarView(viewModel: viewModel)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } content: {
-            Group {
-                switch viewModel.presentation {
-                case .text:
-                    JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
-                        viewModel.copyDisplayedText()
-                    }
-                case .tree:
-                    JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
-                        viewModel.didSelectTreeNode(node)
-                        withAnimation { columnVisibility = .all }
+            HStack(spacing: 0) {
+                Group {
+                    switch viewModel.presentation {
+                    case .text:
+                        JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
+                            viewModel.copyDisplayedText()
+                        }
+                    case .tree:
+                        JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
+                            viewModel.didSelectTreeNode(node)
+                            withAnimation { isInspectorVisible = true }
+                        }
                     }
                 }
+                .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
+                .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if isInspectorVisible {
+                    Divider()
+                    InspectorView(viewModel: viewModel)
+                        .frame(minWidth: 260, idealWidth: 320, maxWidth: 520)
+                        .frame(maxHeight: .infinity)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
-            .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
-            .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
             .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
-        } detail: {
-            InspectorView(viewModel: viewModel)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -72,13 +80,13 @@ struct AppShellView: View {
 
                 Button {
                     withAnimation {
-                        columnVisibility = (columnVisibility == .all) ? .doubleColumn : .all
+                        isInspectorVisible.toggle()
                     }
                 } label: {
-                    Label((columnVisibility == .all) ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                    Label(isInspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "info.circle")
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-                .help((columnVisibility == .all) ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+                .help(isInspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
 
                 if viewModel.fileURL != nil {
                     Button {
@@ -104,7 +112,7 @@ struct AppShellView: View {
         .focusedSceneValue(\.appViewModel, viewModel)
         .onChange(of: viewModel.inspectorPath) { newPath in
             if !newPath.isEmpty {
-                withAnimation { columnVisibility = .all }
+                withAnimation { isInspectorVisible = true }
             }
         }
         #if os(macOS)
