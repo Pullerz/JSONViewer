@@ -6,8 +6,7 @@ import AppKit
 
 struct AppShellView: View {
     @StateObject private var viewModel = AppViewModel()
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    #if os(macOS)
+        #if os(macOS)
     @State private var nsWindow: NSWindow?
     #endif
     @State private var isInspectorVisible: Bool = false
@@ -22,7 +21,7 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView {
             SidebarView(viewModel: viewModel)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } content: {
