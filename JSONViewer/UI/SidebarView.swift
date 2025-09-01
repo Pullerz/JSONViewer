@@ -4,6 +4,7 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var previews: [Int: String] = [:]
     @State private var lastRowCount: Int = 0
+    @State private var isAtBottom: Bool = false
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -95,6 +96,12 @@ struct SidebarView: View {
                                     }
                                     .padding(.vertical, 4)
                                     .contentShape(Rectangle())
+                                    .onAppear {
+                                        if let last = ids.last, i == last { isAtBottom = true }
+                                    }
+                                    .onDisappear {
+                                        if let last = ids.last, i == last { isAtBottom = false }
+                                    }
                                 }
                             }
                             .onChange(of: viewModel.jsonlRowCount) { newCount in
@@ -118,7 +125,9 @@ struct SidebarView: View {
                                     ProgressView(value: progress)
                                         .padding(.horizontal)
                                 }
-                                footerPill()
+                                if !isAtBottom && (viewModel.jsonlRowCount > 0 || !viewModel.jsonlRows.isEmpty) {
+                                    footerPill()
+                                }
                             }
                         }
                     } else {
@@ -135,9 +144,15 @@ struct SidebarView: View {
                                 }
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())
+                                .onAppear {
+                                    if let last = filteredRows.last?.id, row.id == last { isAtBottom = true }
+                                }
+                                .onDisappear {
+                                    if let last = filteredRows.last?.id, row.id == last { isAtBottom = false }
+                                }
                             }
                         }
-                        .overlay(alignment: .bottom) { footerPill() }
+                        .overlay(alignment: .bottom) { if !isAtBottom && !filteredRows.isEmpty { footerPill() } }
                     }
                 case .json:
                     VStack(spacing: 6) {
