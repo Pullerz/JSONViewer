@@ -14,7 +14,7 @@ struct JSONViewerApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup("JSONViewer", id: "main") {
+        WindowGroup("Prism", id: "main") {
             AppShellView()
         }
         .commands {

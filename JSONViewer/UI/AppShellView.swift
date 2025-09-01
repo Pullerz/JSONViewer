@@ -17,7 +17,7 @@ struct AppShellView: View {
     }
 
     private var windowTitle: String {
-        viewModel.fileURL?.lastPathComponent ?? "JSONViewer"
+        viewModel.fileURL?.lastPathComponent ?? "Prism"
     }
 
     var body: some View {
@@ -40,7 +40,7 @@ struct AppShellView: View {
             .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
             .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
-            .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "JSONViewer")
+            .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
         } detail: {
             InspectorView(viewModel: viewModel)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
@@ -97,7 +97,7 @@ struct AppShellView: View {
             // Show native title (file name when available)
             nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = viewModel.fileURL
-            nsWindow?.title = viewModel.fileURL?.lastPathComponent ?? "JSONViewer"
+            nsWindow?.title = viewModel.fileURL?.lastPathComponent ?? "Prism"
             // Ensure no text field is focused by default so Cmd+V pastes into the viewer.
             nsWindow?.makeFirstResponder(nil)
             WindowRegistry.shared.register(viewModel)
@@ -118,7 +118,7 @@ struct AppShellView: View {
             // Keep title and proxy icon in sync with the current file
             nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = newURL
-            nsWindow?.title = newURL?.lastPathComponent ?? "JSONViewer"
+            nsWindow?.title = newURL?.lastPathComponent ?? "Prism"
         }
         #endif
     }
