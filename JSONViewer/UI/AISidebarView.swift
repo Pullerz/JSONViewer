@@ -16,7 +16,8 @@ struct AISidebarView: View {
                         }
                         if let streaming = viewModel.aiStreamingText, !streaming.isEmpty {
                             messageBubble(.init(role: "assistant", text: streaming))
-                                .redacted(reason: .placeholder.opacity(0)) // ensure same layout
+                                .redacted(reason: .placeholder) // keep layout consistent while streaming
+                                .opacity(0)
                         }
                     }
                     .padding(12)
