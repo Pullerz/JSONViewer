@@ -5,11 +5,18 @@ import AppKit
 #endif
 
 struct AppShellView: View {
-    @EnvironmentObject var viewModel: AppViewModel
+    @StateObject private var viewModel = AppViewModel()
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
+    #if os(macOS)
+    @State private var nsWindow: NSWindow?
+    #endif
 
     private var displayText: String {
         viewModel.prettyJSON
+    }
+
+    private var windowTitle: String {
+        viewModel.fileURL?.lastPathComponent ?? "JSONViewer"
     }
 
     var body: some View {
@@ -37,18 +44,31 @@ struct AppShellView: View {
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
         }
         .toolbar {
+            // Center title with context menu to reveal in Finder
+            ToolbarItem(placement: .principal) {
+                Text(windowTitle)
+                    .font(.headline)
+                    .contextMenu {
+                        if let url = viewModel.fileURL {
+                            Button("Show in Finder") { revealInFinder(url) }
+                        }
+                    }
+            }
+
             ToolbarItemGroup {
                 Button {
                     openFile()
                 } label: {
                     Label("Open", systemImage: "folder")
                 }
+                .help("Open JSON/JSONL… (⌘O)")
 
                 Button {
                     pasteFromClipboard()
                 } label: {
                     Label("Paste", systemImage: "doc.on.clipboard")
                 }
+                .help("Paste JSON/JSONL from clipboard (⌘V)")
 
                 Picker("", selection: $viewModel.presentation) {
                     Image(systemName: "text.alignleft").tag(AppViewModel.ContentPresentation.text)
@@ -56,18 +76,45 @@ struct AppShellView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 100)
+                .help("Toggle between raw text and tree")
+
+                if viewModel.fileURL != nil {
+                    Button {
+                        if let url = viewModel.fileURL { revealInFinder(url) }
+                    } label: {
+                        Label("Show in Finder", systemImage: "arrow.right.doc.on.clipboard")
+                    }
+                    .help("Reveal file in Finder")
+                }
 
                 Button {
                     viewModel.clear()
                 } label: {
                     Label("Clear", systemImage: "xmark.circle")
                 }
+                .help("Clear current document")
             }
         }
-        .onDrop(of: [UTType.json.identifier, UTType.plainText.identifier], isTargeted: nil) { providers in
+        .onDrop(of: [UTType.json.identifier, UTType.plainText.identifier, UTType.fileURL.identifier], isTargeted: nil) { providers in
             handleDrop(providers: providers)
         }
         .frame(minWidth: 1024, minHeight: 700)
+        .focusedSceneValue(\.appViewModel, viewModel)
+        #if os(macOS)
+        .background(HostingWindowAccessor { win in
+            nsWindow = win
+            nsWindow?.representedURL = viewModel.fileURL
+            nsWindow?.title = windowTitle
+            WindowRegistry.shared.register(viewModel)
+        })
+        .onDisappear {
+            WindowRegistry.shared.unregister(viewModel)
+        }
+        .onChange(of: viewModel.fileURL) { newURL in
+            nsWindow?.representedURL = newURL
+            nsWindow?.title = windowTitle
+        }
+        #endif
     }
 
     private func openFile() {
@@ -120,5 +167,11 @@ struct AppShellView: View {
             return true
         }
         return false
+    }
+
+    private func revealInFinder(_ url: URL) {
+        #if os(macOS)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        #endif
     }
 }

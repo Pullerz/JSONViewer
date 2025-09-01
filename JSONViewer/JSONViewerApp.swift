@@ -9,12 +9,13 @@ import SwiftUI
 
 @main
 struct JSONViewerApp: App {
-    @StateObject private var viewModel = AppViewModel()
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    #endif
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("JSONViewer", id: "main") {
             AppShellView()
-                .environmentObject(viewModel)
         }
         .commands {
             AppCommands()
