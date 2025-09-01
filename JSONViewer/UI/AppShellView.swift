@@ -52,6 +52,8 @@ struct AppShellView: View {
             }
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
             .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
+        } detail: {
+            EmptyView()
         }
         .toolbar {
             ToolbarItemGroup {
