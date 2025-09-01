@@ -22,7 +22,7 @@ struct AppCommands: Commands {
         }
 
         // Cmd+F - find in raw (native find bar) or focus tree search
-        CommandGroup(replacing: .find) {
+        CommandGroup(after: .textEditing) {
             Button("Find…") {
                 handleFindCommand()
             }
