@@ -103,12 +103,13 @@ struct JSONTreeView: View {
 
                         Spacer(minLength: 8)
 
-                        // Compact icon group for expand/collapse (use widely available SF Symbols)
+                        // Compact icon group for expand/collapse (explicitly sized; won't collapse under layout compression)
                         HStack(spacing: 10) {
                             Button {
                                 viewModel.expandAll()
                             } label: {
                                 Image(systemName: "plus.circle")
+                                    .font(.system(size: 14, weight: .semibold))
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.plain)
@@ -118,11 +119,13 @@ struct JSONTreeView: View {
                                 viewModel.collapseAll()
                             } label: {
                                 Image(systemName: "minus.circle")
+                                    .font(.system(size: 14, weight: .semibold))
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.plain)
                             .help("Collapse All")
                         }
+                        .fixedSize(horizontal: true, vertical: true)
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
                         .background(

@@ -45,6 +45,14 @@ struct AppShellView: View {
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
         }
         .toolbar {
+            // Centered principal title reflecting current file name
+            ToolbarItem(placement: .principal) {
+                Text(viewModel.fileURL?.lastPathComponent ?? "JSONViewer")
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
             ToolbarItemGroup {
                 Button {
                     openFile()
@@ -67,8 +75,6 @@ struct AppShellView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 100)
                 .help("Toggle between raw text and tree")
-
-                
 
                 if viewModel.fileURL != nil {
                     Button {
@@ -95,8 +101,8 @@ struct AppShellView: View {
         #if os(macOS)
         .background(HostingWindowAccessor { win in
             nsWindow = win
-            // Apply initial title and proxy icon once the window is available
-            nsWindow?.titleVisibility = .visible
+            // Hide native title; show our principal title instead (prevents duplicate or stale titles)
+            nsWindow?.titleVisibility = .hidden
             nsWindow?.representedURL = viewModel.fileURL
             nsWindow?.title = viewModel.fileURL?.lastPathComponent ?? "JSONViewer"
             // Ensure no text field is focused by default so Cmd+V pastes into the viewer.
@@ -116,8 +122,8 @@ struct AppShellView: View {
             WindowRegistry.shared.unregister(viewModel)
         }
         .onChange(of: viewModel.fileURL) { newURL in
-            // Keep title and proxy icon in sync with the current file
-            nsWindow?.titleVisibility = .visible
+            // Keep title and proxy icon in sync with the current file; keep native title hidden to avoid duplication
+            nsWindow?.titleVisibility = .hidden
             nsWindow?.representedURL = newURL
             nsWindow?.title = newURL?.lastPathComponent ?? "JSONViewer"
         }
