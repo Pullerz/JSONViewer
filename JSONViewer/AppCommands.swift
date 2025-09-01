@@ -19,6 +19,25 @@ struct AppCommands: Commands {
                 openFile()
             }
             .keyboardShortcut("o", modifiers: [.command])
+
+            // Open Recent submenu (File > Open Recent)
+            Menu("Open Recent") {
+                let recents = NSDocumentController.shared.recentDocumentURLs
+                if recents.isEmpty {
+                    Text("No Recent Documents")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(recents.prefix(15)), id: \.self) { url in
+                        Button(url.lastPathComponent) {
+                            openRecent(url)
+                        }
+                    }
+                    Divider()
+                    Button("Clear Menu") {
+                        NSDocumentController.shared.clearRecentDocuments(nil)
+                    }
+                }
+            }
         }
 
         // Cmd+F - find in raw (native find bar) or focus tree search
@@ -40,6 +59,23 @@ struct AppCommands: Commands {
                 pasteFromClipboard()
             }
             .keyboardShortcut("v", modifiers: [.command, .shift])
+        }
+    }
+
+    private func openRecent(_ url: URL) {
+        #if os(macOS)
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        #endif
+        if let vm = viewModel {
+            vm.loadFile(url: url)
+            return
+        }
+        // No focused window/VM. Open a new window and load the file into it.
+        openWindow(id: "main")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if let vm = WindowRegistry.shared.firstIdleViewModel() {
+                vm.loadFile(url: url)
+            }
         }
     }
 

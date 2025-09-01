@@ -402,6 +402,26 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_CFBundleName = Prism;
+				INFOPLIST_KEY_CFBundleDocumentTypes = (
+					{
+						CFBundleTypeName = "JSON Document";
+						CFBundleTypeRole = Viewer;
+						LSItemContentTypes = ( "public.json" );
+					},
+					{
+						CFBundleTypeName = "JSON Lines Document";
+						CFBundleTypeRole = Viewer;
+						LSItemContentTypes = ( "org.jsonlines.jsonl" );
+					},
+				);
+				INFOPLIST_KEY_UTImportedTypeDeclarations = (
+					{
+						UTTypeIdentifier = "org.jsonlines.jsonl";
+						UTTypeDescription = "JSON Lines Document";
+						UTTypeConformsTo = ( "public.plain-text" );
+						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl" ); "public.mime-type" = "application/x-ndjson"; };
+					},
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -429,6 +449,26 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_CFBundleName = Prism;
+				INFOPLIST_KEY_CFBundleDocumentTypes = (
+					{
+						CFBundleTypeName = "JSON Document";
+						CFBundleTypeRole = Viewer;
+						LSItemContentTypes = ( "public.json" );
+					},
+					{
+						CFBundleTypeName = "JSON Lines Document";
+						CFBundleTypeRole = Viewer;
+						LSItemContentTypes = ( "org.jsonlines.jsonl" );
+					},
+				);
+				INFOPLIST_KEY_UTImportedTypeDeclarations = (
+					{
+						UTTypeIdentifier = "org.jsonlines.jsonl";
+						UTTypeDescription = "JSON Lines Document";
+						UTTypeConformsTo = ( "public.plain-text" );
+						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl" ); "public.mime-type" = "application/x-ndjson"; };
+					},
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
