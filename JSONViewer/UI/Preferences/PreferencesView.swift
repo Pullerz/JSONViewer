@@ -10,6 +10,12 @@ struct PreferencesView: View {
                     Label("Appearance", systemImage: "paintbrush")
                 }
                 .tag(0)
+
+            AIPreferences()
+                .tabItem {
+                    Label("AI", systemImage: "brain.head.profile")
+                }
+                .tag(1)
         }
         .padding(.top, 8)
     }

@@ -56,6 +56,11 @@ final class AppViewModel: ObservableObject {
     @Published var indexingProgress: Double?
     @Published var lastUpdatedAt: Date?
 
+    // Command bar
+    @Published var commandMode: CommandBarView.Mode = .jq
+    @Published var commandText: String = ""
+    @Published var aiStatus: String = ""
+
     // Sidebar (JSONL) search
     @Published var sidebarFilteredRowIDs: [Int]? = nil
     private var sidebarSearchTask: Task<Void, Never>?
@@ -525,5 +530,216 @@ final class AppViewModel: ObservableObject {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    // MARK: - Command Bar Actions
+
+    func runJQ(filter: String) {
+        let trimmed = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isLoading = true
+        statusMessage = "Running jq…"
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let (data, kind) = try self.currentDocumentDataForJQ()
+                let result = try JQRunner.run(filter: trimmed, input: data, kind: kind)
+                let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let outData = output.data(using: .utf8) ?? Data()
+                let tree = try? JSONTreeBuilder.build(from: outData)
+                let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
+                await MainActor.run {
+                    self.prettyJSON = pretty
+                    self.currentTreeRoot = tree
+                    self.presentation = tree == nil ? .text : .tree
+                    self.isLoading = false
+                    self.statusMessage = "jq: \(trimmed)"
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.statusMessage = "jq error: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func currentDocumentDataForJQ() throws -> (Data, JQInputKind) {
+        switch mode {
+        case .json:
+            let json = currentTreeRoot?.asJSONString() ?? prettyJSON
+            return (json.data(using: .utf8) ?? Data(), .json)
+        case .jsonl:
+            if let url = fileURL, FileManager.default.fileExists(atPath: url.path) {
+                let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+                return (data, .jsonlSlurped)
+            } else {
+                let text = jsonlRows.map { $0.raw }.joined(separator: "\n")
+                return (text.data(using: .utf8) ?? Data(), .jsonlSlurped)
+            }
+        case .none:
+            return (Data(), .json)
+        }
+    }
+
+    func writeCurrentDocumentToTmp() throws -> URL {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("prism-work", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let name = "doc-\(UUID().uuidString.prefix(8))"
+        let ext = (mode == .jsonl) ? "jsonl" : "json"
+        let url = tmp.appendingPathComponent("\(name).\(ext)")
+        switch mode {
+        case .json:
+            let json = currentTreeRoot?.asJSONString() ?? prettyJSON
+            try json.data(using: .utf8)?.write(to: url)
+        case .jsonl:
+            if let f = fileURL, FileManager.default.fileExists(atPath: f.path) {
+                let data = try Data(contentsOf: f, options: [.mappedIfSafe])
+                try data.write(to: url)
+            } else {
+                let text = jsonlRows.map { $0.raw }.joined(separator: "\n")
+                try text.data(using: .utf8)?.write(to: url)
+            }
+        case .none:
+            try Data().write(to: url)
+        }
+        return url
+    }
+
+    func runAI(prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let apiKey = OpenAIClient.loadAPIKeyFromDefaultsOrEnv() else {
+            statusMessage = "Missing OpenAI API key (set in Preferences > AI or OPENAI_API_KEY env var)."
+            return
+        }
+
+        aiStatus = "Thinking…"
+        isLoading = true
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let systemPrompt = Self.agentSystemPrompt()
+            let tools = Self.toolSchemas()
+
+            do {
+                let resp = try await OpenAIClient.createResponse(config: .init(apiKey: apiKey, model: "gpt-5", systemPrompt: systemPrompt), userText: trimmed, tools: tools)
+                if let (responseId, calls) = OpenAIClient.extractToolCalls(resp), !calls.isEmpty {
+                    // Execute tools
+                    var outputs: [OpenAIClient.ToolOutput] = []
+                    for call in calls {
+                        if call.name == "run_jq" {
+                            if let json = call.argumentsJSON.data(using: .utf8),
+                               let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+                               let filter = dict["filter"] as? String {
+                                do {
+                                    let (data, kind) = try self.currentDocumentDataForJQ()
+                                    let result = try JQRunner.run(filter: filter, input: data, kind: kind)
+                                    let output = result.stdout
+                                    outputs.append(.init(toolCallId: call.id, output: output))
+                                    // Reflect in viewer
+                                    let outData = output.data(using: .utf8) ?? Data()
+                                    let tree = try? JSONTreeBuilder.build(from: outData)
+                                    let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
+                                    await MainActor.run {
+                                        self.prettyJSON = pretty
+                                        self.currentTreeRoot = tree
+                                        self.presentation = tree == nil ? .text : .tree
+                                    }
+                                } catch {
+                                    outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                }
+                            }
+                        } else if call.name == "run_python" {
+                            if let json = call.argumentsJSON.data(using: .utf8),
+                               let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+                               let code = dict["code"] as? String {
+                                do {
+                                    let inputURL = try self.writeCurrentDocumentToTmp()
+                                    let result = try PythonRunner.run(code: code, inputPath: inputURL)
+                                    let desc: [String: Any] = [
+                                        "stdout": result.stdout,
+                                        "stderr": result.stderr,
+                                        "output_files": result.outputFiles.map { $0.path }
+                                    ]
+                                    let outputJSON = String(data: try JSONSerialization.data(withJSONObject: desc), encoding: .utf8) ?? "{}"
+                                    outputs.append(.init(toolCallId: call.id, output: outputJSON))
+                                } catch {
+                                    outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                }
+                            }
+                        }
+                    }
+
+                    // Submit outputs
+                    let final = try await OpenAIClient.submitToolOutputs(apiKey: apiKey, responseId: responseId, toolOutputs: outputs)
+                    let text = OpenAIClient.extractText(final) ?? ""
+                    await MainActor.run {
+                        self.statusMessage = "AI: \(text.prefix(120))"
+                        self.isLoading = false
+                        self.aiStatus = ""
+                    }
+                } else {
+                    let text = OpenAIClient.extractText(resp) ?? ""
+                    await MainActor.run {
+                        self.statusMessage = "AI: \(text.prefix(120))"
+                        self.isLoading = false
+                        self.aiStatus = ""
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.statusMessage = "AI error: \(error.localizedDescription)"
+                    self.isLoading = false
+                    self.aiStatus = ""
+                }
+            }
+        }
+    }
+
+    private static func agentSystemPrompt() -> String {
+        """
+        You are Prism's data assistant embedded in a macOS JSON/JSONL viewer.
+        You can:
+        - run_jq(filter): run a jq program on the CURRENT document (JSON or JSONL). For JSONL, assume input is slurped (-s) into an array of objects. Return the jq output text to the user.
+        - run_python(code): Run a short Python 3 script against a temporary COPY of the current document located at a path passed as argv[1]; a writable output directory path is provided as argv[2]. Your script should read argv[1] and print results to stdout. If you save files to argv[2], they will be surfaced back to the user.
+
+        Always prefer run_jq for filtering/transforming JSON and JSONL. Use run_python for more complex transformations.
+        Never modify the original file; operate only on provided temp paths.
+        Respond concisely.
+        """
+    }
+
+    private static func toolSchemas() -> [[String: Any]] {
+        let runJQ: [String: Any] = [
+            "type": "function",
+            "function": [
+                "name": "run_jq",
+                "description": "Run a jq filter on the current document (JSON or slurped JSONL). Returns jq output text.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "filter": ["type": "string", "description": "jq filter, e.g. .items | length"]
+                    ],
+                    "required": ["filter"]
+                ]
+            ]
+        ]
+        let runPy: [String: Any] = [
+            "type": "function",
+            "function": [
+                "name": "run_python",
+                "description": "Execute Python 3 code on a temp copy of the current document. Read argv[1]; write optional outputs to argv[2]; print results to stdout.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "code": ["type": "string", "description": "Python 3 script source code"]
+                    ],
+                    "required": ["code"]
+                ]
+            ]
+        ]
+        return [runJQ, runPy]
     }
 }

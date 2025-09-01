@@ -53,6 +53,22 @@ struct AppShellView: View {
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
             .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
         }
+        .overlay(alignment: .bottomLeading) {
+            CommandBarView(
+                mode: $viewModel.commandMode,
+                text: $viewModel.commandText,
+                placeholder: viewModel.commandMode == .jq
+                    ? "jq filter (e.g. .items | length)"
+                    : "Use natural language to search or transform"
+            ) {
+                switch viewModel.commandMode {
+                case .jq:
+                    viewModel.runJQ(filter: viewModel.commandText)
+                case .ai:
+                    viewModel.runAI(prompt: viewModel.commandText)
+                }
+            }
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button {
