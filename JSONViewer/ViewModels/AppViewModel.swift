@@ -36,6 +36,11 @@ final class AppViewModel: ObservableObject {
     @Published var inspectorPath: String = ""
     @Published var inspectorValueText: String = ""
 
+    // Tree presentation state
+    @Published var expandedPaths: Set<String> = []
+    @Published var treeSearchQuery: String = ""
+    @Published var treeFindFocusToken: Int = 0
+
     // JSONL (pasted)
     @Published var jsonlRows: [JSONLRow] = []
 
@@ -68,6 +73,8 @@ final class AppViewModel: ObservableObject {
         currentTreeRoot = nil
         inspectorPath = ""
         inspectorValueText = ""
+        expandedPaths.removeAll()
+        treeSearchQuery = ""
         jsonlRows = []
         jsonlIndex = nil
         jsonlRowCount = 0
@@ -162,6 +169,7 @@ final class AppViewModel: ObservableObject {
                             self.presentation = .tree
                             self.mode = .json
                             self.statusMessage = "Loaded JSON (\(self.formattedByteCount(data.count)))"
+                            if self.expandedPaths.isEmpty { self.expandedPaths.insert("") } // default expand root
                         }
                     }
                 } catch {
@@ -278,6 +286,7 @@ final class AppViewModel: ObservableObject {
                 self.prettyJSON = pretty
                 self.currentTreeRoot = tree
                 self.presentation = .tree
+                if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
             }
         }
         return true
@@ -391,6 +400,51 @@ final class AppViewModel: ObservableObject {
         if let node = root.find(byPath: inspectorPath == "(root)" ? "" : inspectorPath) {
             didSelectTreeNode(node) // will set value text without quotes for strings
         }
+    }
+
+    func expandAll() {
+        guard let root = currentTreeRoot else { return }
+        var set: Set<String> = []
+        func collect(_ node: JSONTreeNode) {
+            if node.children != nil {
+                set.insert(node.path)
+                node.children?.forEach(collect)
+            }
+        }
+        collect(root)
+        expandedPaths = set
+    }
+
+    func collapseAll() {
+        expandedPaths.removeAll()
+    }
+
+    func focusTreeFind() {
+        treeFindFocusToken &+= 1
+    }
+
+    func expandForSearchIfNeeded() {
+        guard let root = currentTreeRoot else { return }
+        let q = treeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        let query = q.lowercased()
+        var set = expandedPaths
+        func traverse(_ node: JSONTreeNode, ancestors: [String]) {
+            let match = node.displayKey.lowercased().contains(query) ||
+                        node.previewValue.lowercased().contains(query) ||
+                        node.path.lowercased().contains(query)
+            if match {
+                for a in ancestors { set.insert(a) }
+            }
+            if let children = node.children {
+                let newAncestors = ancestors + [node.path]
+                for c in children {
+                    traverse(c, ancestors: newAncestors)
+                }
+            }
+        }
+        traverse(root, ancestors: [])
+        expandedPaths = set
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {

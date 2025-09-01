@@ -21,6 +21,14 @@ struct AppCommands: Commands {
             .keyboardShortcut("o", modifiers: [.command])
         }
 
+        // Cmd+F - find in raw (native find bar) or focus tree search
+        CommandGroup(replacing: .find) {
+            Button("Find…") {
+                handleFindCommand()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+        }
+
         // Override Paste to either forward to the first responder (text fields) or paste JSON into the viewer.
         CommandGroup(before: .pasteboard) {
             Button("Paste") {
@@ -44,6 +52,17 @@ struct AppCommands: Commands {
         }
         #endif
         return false
+    }
+
+    private func handleFindCommand() {
+        #if os(macOS)
+        if viewModel?.presentation == .tree {
+            viewModel?.focusTreeFind()
+        } else {
+            // Forward to native find bar in NSTextView
+            NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: NSTextFinder.Action.showFindInterface)
+        }
+        #endif
     }
 
     private func handlePasteCommand() {

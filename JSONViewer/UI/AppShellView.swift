@@ -32,7 +32,7 @@ struct AppShellView: View {
                         viewModel.copyDisplayedText()
                     }
                 case .tree:
-                    JSONTreeView(root: viewModel.currentTreeRoot) { node in
+                    JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
                         viewModel.didSelectTreeNode(node)
                     }
                 }
@@ -67,6 +67,18 @@ struct AppShellView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 100)
                 .help("Toggle between raw text and tree")
+
+                if viewModel.presentation == .tree {
+                    Button("Expand All") {
+                        viewModel.expandAll()
+                    }
+                    .help("Expand all nodes")
+
+                    Button("Collapse All") {
+                        viewModel.collapseAll()
+                    }
+                    .help("Collapse all nodes")
+                }
 
                 if viewModel.fileURL != nil {
                     Button {
