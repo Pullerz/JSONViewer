@@ -5,30 +5,36 @@ import AppKit
 #endif
 
 struct AppShellView: View {
-    @StateObject private var viewModel = AppViewModel()
+    @EnvironmentObject var viewModel: AppViewModel
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     private var displayText: String {
-        switch viewModel.mode {
-        case .json:
-            return viewModel.prettyJSON
-        case .jsonl:
-            return viewModel.selectedRow?.pretty ?? viewModel.selectedRow?.raw ?? "Select a row to view its JSON."
-        case .none:
-            return "Open or paste JSON / JSONL to get started."
-        }
+        viewModel.prettyJSON
     }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(viewModel: viewModel)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } content: {
-            JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
-                viewModel.copyDisplayedText()
+            Group {
+                switch viewModel.presentation {
+                case .text:
+                    JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
+                        viewModel.copyDisplayedText()
+                    }
+                case .tree:
+                    JSONTreeView(root: viewModel.currentTreeRoot) { node in
+                        viewModel.didSelectTreeNode(node)
+                    }
+                }
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
+            .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
+            .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
         } detail: {
             InspectorView(viewModel: viewModel)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -44,6 +50,13 @@ struct AppShellView: View {
                     Label("Paste", systemImage: "doc.on.clipboard")
                 }
 
+                Picker("", selection: $viewModel.presentation) {
+                    Image(systemName: "text.alignleft").tag(AppViewModel.ContentPresentation.text)
+                    Image(systemName: "list.bullet.indent").tag(AppViewModel.ContentPresentation.tree)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 100)
+
                 Button {
                     viewModel.clear()
                 } label: {
@@ -54,6 +67,7 @@ struct AppShellView: View {
         .onDrop(of: [UTType.json.identifier, UTType.plainText.identifier], isTargeted: nil) { providers in
             handleDrop(providers: providers)
         }
+        .frame(minWidth: 1024, minHeight: 700)
     }
 
     private func openFile() {

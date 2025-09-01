@@ -5,33 +5,43 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            switch viewModel.mode {
-            case .json:
+            HStack {
                 Text("Inspector")
                     .font(.headline)
-                Text("Click a value to see details here. (Coming soon)")
-                    .foregroundStyle(.secondary)
-            case .jsonl:
-                if let row = viewModel.selectedRow {
-                    Text("Row \(row.id)")
-                        .font(.headline)
-                    Divider()
-                    Text(row.pretty ?? row.raw)
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                } else {
-                    Text("No Row Selected")
-                        .font(.headline)
-                    Text("Select a row in the sidebar.")
-                        .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    #if os(macOS)
+                    if !viewModel.inspectorValueText.isEmpty {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(viewModel.inspectorValueText, forType: .string)
+                    }
+                    #endif
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .labelStyle(.iconOnly)
                 }
-            case .none:
-                Text("Inspector")
-                    .font(.headline)
-                Text("Open or paste a document.")
-                    .foregroundStyle(.secondary)
+                .help("Copy value")
             }
-            Spacer()
+
+            if viewModel.inspectorPath.isEmpty {
+                Text("Click a value in the main view to inspect it.")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(viewModel.inspectorPath)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Divider()
+                    ScrollView {
+                        Text(viewModel.inspectorValueText)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                Spacer()
+            }
         }
         .padding()
     }
