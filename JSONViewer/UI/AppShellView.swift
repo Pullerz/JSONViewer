@@ -24,7 +24,7 @@ struct AppShellView: View {
         NavigationSplitView {
             SidebarView(viewModel: viewModel)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
-        } content: {
+        } detail: {
             HStack(spacing: 0) {
                 Group {
                     switch viewModel.presentation {
