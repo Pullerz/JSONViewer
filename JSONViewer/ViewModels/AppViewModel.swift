@@ -54,6 +54,7 @@ final class AppViewModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var searchText: String = ""
     @Published var indexingProgress: Double?
+    @Published var lastUpdatedAt: Date?
 
     // Sidebar (JSONL) search
     @Published var sidebarFilteredRowIDs: [Int]? = nil
@@ -94,6 +95,7 @@ final class AppViewModel: ObservableObject {
         fileChangeDebounce = nil
         fileWatcher?.cancel()
         fileWatcher = nil
+        lastUpdatedAt = nil
     }
 
     func handlePaste(text: String) {
@@ -140,6 +142,7 @@ final class AppViewModel: ObservableObject {
         mode = .jsonl
         statusMessage = "Pasted JSONL (\(rows.count) rows shown)"
         selectedRowID = rows.first?.id
+        lastUpdatedAt = Date()
         await updateTreeForSelectedRow()
     }
 
@@ -197,6 +200,7 @@ final class AppViewModel: ObservableObject {
                     Task { @MainActor in
                         self?.indexingProgress = progress
                         self?.statusMessage = "Indexing… \(Int(progress * 100))%"
+                        self?.lastUpdatedAt = Date()
                     }
                 }, onUpdate: { count in
                     Task { @MainActor in
@@ -204,6 +208,7 @@ final class AppViewModel: ObservableObject {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             self.jsonlRowCount = count
                         }
+                        self.lastUpdatedAt = Date()
                         if self.selectedRowID == nil && count > 0 {
                             self.selectedRowID = 0
                             Task { _ = await self.updateTreeForSelectedRow() }
@@ -215,6 +220,7 @@ final class AppViewModel: ObservableObject {
                 })
                 await MainActor.run {
                     self?.statusMessage = "Indexed \(index.lineCount) rows"
+                    self?.lastUpdatedAt = Date()
                 }
             } catch {
                 await MainActor.run {
@@ -384,11 +390,13 @@ final class AppViewModel: ObservableObject {
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 self?.jsonlRowCount = count
                             }
+                            self?.lastUpdatedAt = Date()
                         }
                     })
                     await MainActor.run {
                         // Rebuild current row view if one is selected
                         Task { _ = await self?.updateTreeForSelectedRow() }
+                        self?.lastUpdatedAt = Date()
                     }
                 } catch {
                     // ignore transient errors

@@ -12,6 +12,35 @@ struct SidebarView: View {
         }
     }
 
+    private func relativeUpdatedString() -> String? {
+        guard let date = viewModel.lastUpdatedAt else { return nil }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+
+    @ViewBuilder
+    private func footerPill() -> some View {
+        let count = (viewModel.jsonlIndex != nil) ? viewModel.jsonlRowCount : viewModel.jsonlRows.count
+        HStack(spacing: 6) {
+            Text("\(count) rows")
+            if let rel = relativeUpdatedString() {
+                Text("· updated \(rel)")
+            }
+        }
+        .font(.caption)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(
+            Capsule().fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            Capsule().strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+
     var body: some View {
         VStack(spacing: 10) {
             // Styled, integrated search field matching tree viewer
@@ -84,10 +113,12 @@ struct SidebarView: View {
                             }
                         }
                         .overlay(alignment: .bottom) {
-                            if let progress = viewModel.indexingProgress, progress < 1.0 {
-                                ProgressView(value: progress)
-                                    .padding(.horizontal)
-                                    .padding(.bottom, 6)
+                            VStack(spacing: 6) {
+                                if let progress = viewModel.indexingProgress, progress < 1.0 {
+                                    ProgressView(value: progress)
+                                        .padding(.horizontal)
+                                }
+                                footerPill()
                             }
                         }
                     } else {
@@ -106,6 +137,7 @@ struct SidebarView: View {
                                 .contentShape(Rectangle())
                             }
                         }
+                        .overlay(alignment: .bottom) { footerPill() }
                     }
                 case .json:
                     VStack(spacing: 6) {
