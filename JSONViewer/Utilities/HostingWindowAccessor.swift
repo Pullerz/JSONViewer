@@ -7,10 +7,19 @@ import AppKit
 struct HostingWindowAccessor: NSViewRepresentable {
     let callback: (NSWindow) -> Void
 
+    final class Coordinator {
+        var didProvideWindow = false
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
-            if let window = view.window {
+            if let window = view.window, context.coordinator.didProvideWindow == false {
+                context.coordinator.didProvideWindow = true
                 callback(window)
             }
         }
@@ -18,7 +27,9 @@ struct HostingWindowAccessor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if let window = nsView.window {
+        // Provide the window only once to avoid state mutation during updates
+        if let window = nsView.window, context.coordinator.didProvideWindow == false {
+            context.coordinator.didProvideWindow = true
             callback(window)
         }
     }

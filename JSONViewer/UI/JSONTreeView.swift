@@ -12,25 +12,59 @@ struct JSONTreeView: View {
         let depth: Int
     }
 
+    private func nodeMatches(_ node: JSONTreeNode, query: String) -> Bool {
+        if query.isEmpty { return true }
+        let text = "\(node.displayKey) \(node.previewValue) \(node.path)".lowercased()
+        return text.contains(query)
+    }
+
+    private func ancestorPathsForMatches(root: JSONTreeNode, query: String) -> Set<String> {
+        var result: Set<String> = []
+        guard !query.isEmpty else { return result }
+        let q = query.lowercased()
+
+        func dfs(_ node: JSONTreeNode, ancestors: [String]) -> Bool {
+            var matched = nodeMatches(node, query: q)
+            if let children = node.children {
+                let newAncestors = ancestors + [node.path]
+                for c in children {
+                    let childMatched = dfs(c, ancestors: newAncestors)
+                    matched = matched || childMatched
+                }
+            }
+            if matched {
+                for p in ancestors { result.insert(p) }
+            }
+            return matched
+        }
+
+        _ = dfs(root, ancestors: [])
+        return result
+    }
+
     private var visibleRows: [RowItem] {
         guard let root else { return [] }
+        let q = viewModel.treeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let autoExpand = ancestorPathsForMatches(root: root, query: q)
+        let expansionSet = viewModel.expandedPaths.union(autoExpand)
+
         var rows: [RowItem] = []
         func walk(_ node: JSONTreeNode, depth: Int) {
             rows.append(RowItem(node: node, depth: depth))
-            if let children = node.children, viewModel.expandedPaths.contains(node.path) {
+            if let children = node.children, expansionSet.contains(node.path) {
                 for c in children {
                     walk(c, depth: depth + 1)
                 }
             }
         }
         walk(root, depth: 0)
-        if viewModel.treeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+
+        if q.isEmpty {
             return rows
         } else {
-            let q = viewModel.treeSearchQuery.lowercased()
+            // Filter out branches unrelated to matches, but keep ancestors (autoExpand)
             return rows.filter { item in
-                let text = "\(item.node.displayKey) \(item.node.previewValue) \(item.node.path)".lowercased()
-                return text.contains(q)
+                nodeMatches(item.node, query: q) || autoExpand.contains(item.node.path)
             }
         }
     }
@@ -46,46 +80,46 @@ struct JSONTreeView: View {
     var body: some View {
         Group {
             if let _ = root {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     // In-view toolbar with find + expand/collapse, styled as a capsule group
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         HStack(spacing: 6) {
                             Image(systemName: "magnifyingglass")
                                 .foregroundStyle(.secondary)
                             TextField("Find in tree", text: $viewModel.treeSearchQuery)
                                 .textFieldStyle(.plain)
                                 .focused($findFocused)
-                                .onChange(of: viewModel.treeSearchQuery) { _ in
-                                    // Defer expansion to next runloop to avoid state-during-update warnings
-                                    DispatchQueue.main.async {
-                                        viewModel.expandForSearchIfNeeded()
-                                    }
-                                }
                         }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
                         .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.secondary.opacity(0.12))
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(nsColor: .controlBackgroundColor))
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 10)
                                 .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
                         )
 
-                        Spacer(minLength: 6)
+                        Spacer(minLength: 8)
 
-                        Button("Expand All") {
-                            viewModel.expandAll()
-                        }
-                        .controlSize(.small)
+                        HStack(spacing: 8) {
+                            Button("Expand All") {
+                                viewModel.expandAll()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.accentColor)
 
-                        Button("Collapse All") {
-                            viewModel.collapseAll()
+                            Button("Collapse All") {
+                                viewModel.collapseAll()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .controlSize(.small)
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
 
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
@@ -102,7 +136,9 @@ struct JSONTreeView: View {
                                 }
                             }
                         }
-                        .padding()
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                        .padding(.top, 2)
                     }
                 }
                 .onChange(of: viewModel.treeFindFocusToken) { _ in
