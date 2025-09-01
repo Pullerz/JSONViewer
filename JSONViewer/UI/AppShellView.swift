@@ -10,6 +10,7 @@ struct AppShellView: View {
     #if os(macOS)
     @State private var nsWindow: NSWindow?
     #endif
+    @State private var isInspectorVisible: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     private var displayText: String {
@@ -21,29 +22,57 @@ struct AppShellView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(viewModel: viewModel)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
-        } content: {
-            Group {
-                switch viewModel.presentation {
-                case .text:
-                    JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
-                        viewModel.copyDisplayedText()
+        Group {
+            if isInspectorVisible {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    SidebarView(viewModel: viewModel)
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
+                } content: {
+                    Group {
+                        switch viewModel.presentation {
+                        case .text:
+                            JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
+                                viewModel.copyDisplayedText()
+                            }
+                        case .tree:
+                            JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
+                                viewModel.didSelectTreeNode(node)
+                                isInspectorVisible = true
+                            }
+                        }
                     }
-                case .tree:
-                    JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
-                        viewModel.didSelectTreeNode(node)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
+                    .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
+                    .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
+                } detail: {
+                    InspectorView(viewModel: viewModel)
+                        .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
+                }
+            } else {
+                NavigationSplitView(columnVisibility: $columnVisibility) {
+                    SidebarView(viewModel: viewModel)
+                        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
+                } content: {
+                    Group {
+                        switch viewModel.presentation {
+                        case .text:
+                            JSONTextView(text: displayText, isLoading: viewModel.isLoading, status: viewModel.statusMessage) {
+                                viewModel.copyDisplayedText()
+                            }
+                        case .tree:
+                            JSONTreeView(viewModel: viewModel, root: viewModel.currentTreeRoot) { node in
+                                viewModel.didSelectTreeNode(node)
+                                isInspectorVisible = true
+                            }
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
+                    .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
+                    .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
-            .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
-            .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
-            .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
-        } detail: {
-            InspectorView(viewModel: viewModel)
-                .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -69,6 +98,14 @@ struct AppShellView: View {
                 .frame(width: 100)
                 .help("Toggle between raw text and tree")
 
+                Button {
+                    isInspectorVisible.toggle()
+                } label: {
+                    Label(isInspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(isInspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+
                 if viewModel.fileURL != nil {
                     Button {
                         if let url = viewModel.fileURL { revealInFinder(url) }
@@ -91,6 +128,11 @@ struct AppShellView: View {
         }
         .frame(minWidth: 1024, minHeight: 700)
         .focusedSceneValue(\.appViewModel, viewModel)
+        .onChange(of: viewModel.inspectorPath) { newPath in
+            if !newPath.isEmpty {
+                isInspectorVisible = true
+            }
+        }
         #if os(macOS)
         .background(HostingWindowAccessor { win in
             nsWindow = win
