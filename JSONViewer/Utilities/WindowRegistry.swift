@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 final class WindowRegistry {
     static let shared = WindowRegistry()
 

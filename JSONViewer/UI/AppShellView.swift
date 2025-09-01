@@ -10,6 +10,7 @@ struct AppShellView: View {
     #if os(macOS)
     @State private var nsWindow: NSWindow?
     #endif
+    @Environment(\.openWindow) private var openWindow
 
     private var displayText: String {
         viewModel.prettyJSON
@@ -107,6 +108,11 @@ struct AppShellView: View {
             nsWindow?.title = windowTitle
             WindowRegistry.shared.register(viewModel)
         })
+        .onAppear {
+            OpenWindowBridge.shared.openWindowHandler = { id in
+                openWindow(id: id)
+            }
+        }
         .onDisappear {
             WindowRegistry.shared.unregister(viewModel)
         }
