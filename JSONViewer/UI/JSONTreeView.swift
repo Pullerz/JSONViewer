@@ -23,7 +23,7 @@ struct JSONTreeView: View {
                 }
             }
         }
-        walk(root, 0)
+        walk(root, depth: 0)
         if viewModel.treeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return rows
         } else {
