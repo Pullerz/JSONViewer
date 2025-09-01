@@ -40,6 +40,7 @@ struct AppShellView: View {
             .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
             .animation(.easeInOut(duration: 0.2), value: viewModel.presentation)
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
+            .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "JSONViewer")
         } detail: {
             InspectorView(viewModel: viewModel)
                 .navigationSplitViewColumnWidth(min: 260, ideal: 320, max: 520)
