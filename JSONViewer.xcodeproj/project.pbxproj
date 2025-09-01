@@ -399,27 +399,23 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"JSONViewer/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = JSONViewer/Info.plist;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_CFBundleName = Prism;
-				INFOPLIST_KEY_CFBundleDocumentTypes = (
-					{
-						CFBundleTypeName = "JSON Document";
-						CFBundleTypeRole = Viewer;
-						LSItemContentTypes = ( "public.json" );
-					},
-					{
-						CFBundleTypeName = "JSON Lines Document";
-						CFBundleTypeRole = Viewer;
-						LSItemContentTypes = ( "org.jsonlines.jsonl" );
-					},
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
 				);
-				INFOPLIST_KEY_UTImportedTypeDeclarations = (
-					{
-						UTTypeIdentifier = "org.jsonlines.jsonl";
-						UTTypeDescription = "JSON Lines Document";
-						UTTypeConformsTo = ( "public.plain-text" );
-						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl" ); "public.mime-type" = "application/x-ndjson"; };
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cosine.JSONViewer;
+				PRODUCT_NAME = Prism;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
 					},
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -447,27 +443,23 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"JSONViewer/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = JSONViewer/Info.plist;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_CFBundleName = Prism;
-				INFOPLIST_KEY_CFBundleDocumentTypes = (
-					{
-						CFBundleTypeName = "JSON Document";
-						CFBundleTypeRole = Viewer;
-						LSItemContentTypes = ( "public.json" );
-					},
-					{
-						CFBundleTypeName = "JSON Lines Document";
-						CFBundleTypeRole = Viewer;
-						LSItemContentTypes = ( "org.jsonlines.jsonl" );
-					},
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
 				);
-				INFOPLIST_KEY_UTImportedTypeDeclarations = (
-					{
-						UTTypeIdentifier = "org.jsonlines.jsonl";
-						UTTypeDescription = "JSON Lines Document";
-						UTTypeConformsTo = ( "public.plain-text" );
-						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl" ); "public.mime-type" = "application/x-ndjson"; };
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cosine.JSONViewer;
+				PRODUCT_NAME = Prism;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 					},
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
