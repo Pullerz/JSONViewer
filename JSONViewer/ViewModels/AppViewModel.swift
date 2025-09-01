@@ -555,7 +555,7 @@ final class AppViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                let (data, kind) = try self.currentDocumentDataForJQ()
+                let (data, kind) = try await self.currentDocumentDataForJQ()
                 let result = try JQRunner.run(filter: trimmed, input: data, kind: kind)
                 let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 let outData = output.data(using: .utf8) ?? Data()
@@ -636,8 +636,8 @@ final class AppViewModel: ObservableObject {
         aiStreamTask?.cancel()
         aiStreamTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            let systemPrompt = Self.agentSystemPrompt()
-            let tools = Self.toolSchemas()
+            let systemPrompt = await Self.agentSystemPrompt()
+            let tools = await Self.toolSchemas()
 
             do {
                 try await OpenAIStreamClient.streamCreateResponse(
@@ -661,7 +661,7 @@ final class AppViewModel: ObservableObject {
                                            let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
                                            let filter = dict["filter"] as? String {
                                             do {
-                                                let (data, kind) = try self.currentDocumentDataForJQ()
+                                                let (data, kind) = try await self.currentDocumentDataForJQ()
                                                 let result = try JQRunner.run(filter: filter, input: data, kind: kind)
                                                 let output = result.stdout
                                                 outputs.append(.init(toolCallId: call.id, output: output))
@@ -682,7 +682,7 @@ final class AppViewModel: ObservableObject {
                                            let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
                                            let code = dict["code"] as? String {
                                             do {
-                                                let inputURL = try self.writeCurrentDocumentToTmp()
+                                                let inputURL = try await self.writeCurrentDocumentToTmp()
                                                 let result = try PythonRunner.run(code: code, inputPath: inputURL)
                                                 let desc: [String: Any] = [
                                                     "stdout": result.stdout,
