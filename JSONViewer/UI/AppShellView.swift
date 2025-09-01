@@ -130,7 +130,9 @@ struct AppShellView: View {
                 openWindow(id: id)
             }
             // Drain any pending open requests queued by the AppDelegate (e.g., Dock drops).
-            OpenRequests.shared.drain(into: viewModel, openWindow: openWindow)
+            OpenRequests.shared.drain(into: viewModel) { id in
+                openWindow(id: id)
+            }
             // Ensure no UI element steals focus on first launch so Cmd+V pastes into viewer.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 nsWindow?.makeFirstResponder(nil)
