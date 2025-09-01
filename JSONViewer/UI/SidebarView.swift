@@ -4,6 +4,7 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var previews: [Int: String] = [:]
     @FocusState private var isSearchFocused: Bool
+    @State private var lastRowCount: Int = 0
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -25,27 +26,42 @@ struct SidebarView: View {
             Group {
                 switch viewModel.mode {
                 case .jsonl:
-                    if let index = viewModel.jsonlIndex {
+                    if viewModel.jsonlIndex != nil {
                         // File-backed, virtualized list
-                        List(selection: $viewModel.selectedRowID) {
-                            ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Row \(i)")
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                    Text(previews[i] ?? "Loading…")
-                                        .font(.system(.caption, design: .monospaced))
-                                        .lineLimit(2)
+                        ScrollViewReader { proxy in
+                            List(selection: $viewModel.selectedRowID) {
+                                ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Row \(i)")
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                        Text(previews[i] ?? "Loading…")
+                                            .font(.system(.caption, design: .monospaced))
+                                            .lineLimit(2)
+                                    }
+                                    .id(i)
+                                    .task(id: i) {
+                                        if previews[i] == nil {
+                                            viewModel.preview(for: i) { text in
+                                                previews[i] = text
+                                            }
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+                                    .contentShape(Rectangle())
                                 }
-                                .task(id: i) {
-                                    if previews[i] == nil {
-                                        viewModel.preview(for: i) { text in
-                                            previews[i] = text
+                            }
+                            .onChange(of: viewModel.jsonlRowCount) { newCount in
+                                // If user had last row selected, keep them pinned to bottom
+                                let shouldPin = viewModel.selectedRowID == lastRowCount - 1
+                                lastRowCount = newCount
+                                if shouldPin && newCount > 0 {
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            proxy.scrollTo(newCount - 1, anchor: .bottom)
                                         }
                                     }
                                 }
-                                .padding(.vertical, 4)
-                                .contentShape(Rectangle())
                             }
                         }
                         .overlay(alignment: .bottom) {
@@ -97,7 +113,10 @@ struct SidebarView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
         }
-        .onAppear { isSearchFocused = false }
+        .onAppear { 
+            isSearchFocused = false
+            lastRowCount = viewModel.jsonlRowCount
+        }
         .onChange(of: viewModel.mode) { _ in isSearchFocused = false }
         .onChange(of: viewModel.selectedRowID) { _ in
             Task { _ = await viewModel.updateTreeForSelectedRow() }

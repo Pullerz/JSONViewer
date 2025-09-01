@@ -52,6 +52,8 @@ final class AppViewModel: ObservableObject {
 
     // Work management
     private var currentComputeTask: Task<Void, Never>?
+    private var fileWatcher: FileWatcher?
+    private var fileChangeDebounce: Task<Void, Never>?
 
     var selectedRow: JSONLRow? {
         guard let id = selectedRowID else { return nil }
@@ -77,6 +79,10 @@ final class AppViewModel: ObservableObject {
         previewCache.removeAllObjects()
         currentComputeTask?.cancel()
         currentComputeTask = nil
+        fileChangeDebounce?.cancel()
+        fileChangeDebounce = nil
+        fileWatcher?.cancel()
+        fileWatcher = nil
     }
 
     func handlePaste(text: String) {
@@ -129,6 +135,7 @@ final class AppViewModel: ObservableObject {
     func loadFile(url: URL) {
         clear()
         fileURL = url
+        startWatchingFile(url)
         Task {
             await loadFromFile()
         }
@@ -149,11 +156,13 @@ final class AppViewModel: ObservableObject {
                     let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? (String(data: data, encoding: .utf8) ?? "")
                     let tree = try? JSONTreeBuilder.build(from: data)
                     await MainActor.run {
-                        self.prettyJSON = pretty
-                        self.currentTreeRoot = tree
-                        self.presentation = .tree
-                        self.mode = .json
-                        self.statusMessage = "Loaded JSON (\(self.formattedByteCount(data.count)))"
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            self.prettyJSON = pretty
+                            self.currentTreeRoot = tree
+                            self.presentation = .tree
+                            self.mode = .json
+                            self.statusMessage = "Loaded JSON (\(self.formattedByteCount(data.count)))"
+                        }
                     }
                 } catch {
                     await MainActor.run {
@@ -180,7 +189,9 @@ final class AppViewModel: ObservableObject {
                 }, onUpdate: { count in
                     Task { @MainActor in
                         guard let self else { return }
-                        self.jsonlRowCount = count
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            self.jsonlRowCount = count
+                        }
                         if self.selectedRowID == nil && count > 0 {
                             self.selectedRowID = 0
                             Task { _ = await self.updateTreeForSelectedRow() }
@@ -274,7 +285,20 @@ final class AppViewModel: ObservableObject {
 
     func didSelectTreeNode(_ node: JSONTreeNode) {
         inspectorPath = node.path.isEmpty ? "(root)" : node.path
-        inspectorValueText = node.asJSONString()
+        if let scalar = node.scalar {
+            switch scalar {
+            case .string(let s):
+                inspectorValueText = s // unquoted
+            case .number(let d):
+                inspectorValueText = String(d)
+            case .bool(let b):
+                inspectorValueText = b ? "true" : "false"
+            case .null:
+                inspectorValueText = "null"
+            }
+        } else {
+            inspectorValueText = node.asJSONString()
+        }
         #if os(macOS)
         NSPasteboard.general.clearContents()
         #endif
@@ -296,6 +320,77 @@ final class AppViewModel: ObservableObject {
             NSPasteboard.general.setString(text, forType: .string)
         }
         #endif
+    }
+
+    private func startWatchingFile(_ url: URL) {
+        fileWatcher?.cancel()
+        fileWatcher = FileWatcher(url: url) { [weak self] in
+            Task { @MainActor in
+                self?.debouncedFileChanged()
+            }
+        }
+    }
+
+    private func debouncedFileChanged() {
+        fileChangeDebounce?.cancel()
+        fileChangeDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000) // 250ms debounce
+            await handleFileChanged()
+        }
+    }
+
+    private func handleFileChanged() async {
+        guard let url = fileURL else { return }
+        switch mode {
+        case .json:
+            currentComputeTask?.cancel()
+            currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self else { return }
+                do {
+                    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+                    let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? (String(data: data, encoding: .utf8) ?? "")
+                    let tree = try? JSONTreeBuilder.build(from: data)
+                    await MainActor.run {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            self.prettyJSON = pretty
+                            self.currentTreeRoot = tree
+                        }
+                        // If inspector path refers to a node, refresh its value too
+                        self.refreshInspectorFromCurrentPath()
+                    }
+                } catch {
+                    // Ignore transient errors during writes
+                }
+            }
+        case .jsonl:
+            guard let index = jsonlIndex else { return }
+            Task.detached(priority: .userInitiated) { [weak self] in
+                do {
+                    try index.refresh(progress: { _ in }, onUpdate: { count in
+                        Task { @MainActor in
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                self?.jsonlRowCount = count
+                            }
+                        }
+                    })
+                    await MainActor.run {
+                        // Rebuild current row view if one is selected
+                        Task { _ = await self?.updateTreeForSelectedRow() }
+                    }
+                } catch {
+                    // ignore transient errors
+                }
+            }
+        case .none:
+            break
+        }
+    }
+
+    private func refreshInspectorFromCurrentPath() {
+        guard !inspectorPath.isEmpty, let root = currentTreeRoot else { return }
+        if let node = root.find(byPath: inspectorPath == "(root)" ? "" : inspectorPath) {
+            didSelectTreeNode(node) // will set value text without quotes for strings
+        }
     }
 
     private func formattedByteCount(_ bytes: Int) -> String {

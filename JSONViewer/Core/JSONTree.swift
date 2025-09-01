@@ -109,4 +109,17 @@ extension JSONTreeNode {
             return "null"
         }
     }
+
+    func find(byPath target: String) -> JSONTreeNode? {
+        if self.path == target {
+            return self
+        }
+        guard let children else { return nil }
+        for child in children {
+            if let found = child.find(byPath: target) {
+                return found
+            }
+        }
+        return nil
+    }
 }
