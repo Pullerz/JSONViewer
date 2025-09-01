@@ -10,6 +10,7 @@ struct AppShellView: View {
     @State private var nsWindow: NSWindow?
     #endif
     @State private var isInspectorVisible: Bool = false
+    @State private var isAISidebarVisible: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     private var displayText: String {
@@ -49,6 +50,11 @@ struct AppShellView: View {
                         .frame(maxHeight: .infinity)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
+                if isAISidebarVisible {
+                    Divider()
+                    AISidebarView(viewModel: viewModel)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
             .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
@@ -65,6 +71,7 @@ struct AppShellView: View {
                 case .jq:
                     viewModel.runJQ(filter: viewModel.commandText)
                 case .ai:
+                    withAnimation { isAISidebarVisible = true }
                     viewModel.runAI(prompt: viewModel.commandText)
                 }
             }
@@ -102,6 +109,16 @@ struct AppShellView: View {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .help(isInspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+
+                Button {
+                    withAnimation {
+                        isAISidebarVisible.toggle()
+                    }
+                } label: {
+                    Label(isAISidebarVisible ? "Hide AI Sidebar" : "Show AI Sidebar", systemImage: "bubble.right")
+                }
+                .keyboardShortcut("a", modifiers: [.command, .option])
+                .help(isAISidebarVisible ? "Hide AI Sidebar (⌥⌘A)" : "Show AI Sidebar (⌥⌘A)")
 
                 if viewModel.fileURL != nil {
                     Button {

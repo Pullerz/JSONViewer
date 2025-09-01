@@ -61,6 +61,18 @@ final class AppViewModel: ObservableObject {
     @Published var commandText: String = ""
     @Published var aiStatus: String = ""
 
+    // AI conversation
+    struct AIMessage: Identifiable, Hashable {
+        let id = UUID()
+        let role: String // "user" | "assistant"
+        let text: String
+        let date: Date = Date()
+    }
+    @Published var aiMessages: [AIMessage] = []
+    @Published var aiStreamingText: String? = nil
+    @Published var aiIsStreaming: Bool = false
+    private var aiStreamTask: Task<Void, Never>?
+
     // Sidebar (JSONL) search
     @Published var sidebarFilteredRowIDs: [Int]? = nil
     private var sidebarSearchTask: Task<Void, Never>?
@@ -615,87 +627,145 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        aiMessages.append(AIMessage(role: "user", text: trimmed))
+        aiStreamingText = ""
+        aiIsStreaming = true
         aiStatus = "Thinking…"
         isLoading = true
 
-        Task.detached(priority: .userInitiated) { [weak self] in
+        aiStreamTask?.cancel()
+        aiStreamTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let systemPrompt = Self.agentSystemPrompt()
             let tools = Self.toolSchemas()
 
             do {
-                let resp = try await OpenAIClient.createResponse(config: .init(apiKey: apiKey, model: "gpt-5", systemPrompt: systemPrompt), userText: trimmed, tools: tools)
-                if let (responseId, calls) = OpenAIClient.extractToolCalls(resp), !calls.isEmpty {
-                    // Execute tools
-                    var outputs: [OpenAIClient.ToolOutput] = []
-                    for call in calls {
-                        if call.name == "run_jq" {
-                            if let json = call.argumentsJSON.data(using: .utf8),
-                               let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-                               let filter = dict["filter"] as? String {
+                try await OpenAIStreamClient.streamCreateResponse(
+                    config: .init(apiKey: apiKey, model: "gpt-5", systemPrompt: systemPrompt),
+                    userText: trimmed,
+                    tools: tools
+                ) { event in
+                    Task { @MainActor in
+                        switch event {
+                        case .textDelta(let t):
+                            self.aiStreamingText = (self.aiStreamingText ?? "") + t
+                        case .requiresAction(let responseId, let calls):
+                            // Execute tools locally, then stream the continuation
+                            self.statusMessage = "AI using tools…"
+                            Task.detached(priority: .userInitiated) { [weak self] in
+                                guard let self else { return }
+                                var outputs: [OpenAIClient.ToolOutput] = []
+                                for call in calls {
+                                    if call.name == "run_jq" {
+                                        if let json = call.argumentsJSON.data(using: .utf8),
+                                           let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+                                           let filter = dict["filter"] as? String {
+                                            do {
+                                                let (data, kind) = try self.currentDocumentDataForJQ()
+                                                let result = try JQRunner.run(filter: filter, input: data, kind: kind)
+                                                let output = result.stdout
+                                                outputs.append(.init(toolCallId: call.id, output: output))
+                                                let outData = output.data(using: .utf8) ?? Data()
+                                                let tree = try? JSONTreeBuilder.build(from: outData)
+                                                let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
+                                                await MainActor.run {
+                                                    self.prettyJSON = pretty
+                                                    self.currentTreeRoot = tree
+                                                    self.presentation = tree == nil ? .text : .tree
+                                                }
+                                            } catch {
+                                                outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                            }
+                                        }
+                                    } else if call.name == "run_python" {
+                                        if let json = call.argumentsJSON.data(using: .utf8),
+                                           let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+                                           let code = dict["code"] as? String {
+                                            do {
+                                                let inputURL = try self.writeCurrentDocumentToTmp()
+                                                let result = try PythonRunner.run(code: code, inputPath: inputURL)
+                                                let desc: [String: Any] = [
+                                                    "stdout": result.stdout,
+                                                    "stderr": result.stderr,
+                                                    "output_files": result.outputFiles.map { $0.path }
+                                                ]
+                                                let outputJSON = String(data: try JSONSerialization.data(withJSONObject: desc), encoding: .utf8) ?? "{}"
+                                                outputs.append(.init(toolCallId: call.id, output: outputJSON))
+                                            } catch {
+                                                outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                            }
+                                        }
+                                    }
+                                }
                                 do {
-                                    let (data, kind) = try self.currentDocumentDataForJQ()
-                                    let result = try JQRunner.run(filter: filter, input: data, kind: kind)
-                                    let output = result.stdout
-                                    outputs.append(.init(toolCallId: call.id, output: output))
-                                    // Reflect in viewer
-                                    let outData = output.data(using: .utf8) ?? Data()
-                                    let tree = try? JSONTreeBuilder.build(from: outData)
-                                    let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
-                                    await MainActor.run {
-                                        self.prettyJSON = pretty
-                                        self.currentTreeRoot = tree
-                                        self.presentation = tree == nil ? .text : .tree
+                                    try await OpenAIStreamClient.streamSubmitToolOutputs(
+                                        apiKey: apiKey,
+                                        responseId: responseId,
+                                        toolOutputs: outputs
+                                    ) { evt in
+                                        Task { @MainActor in
+                                            switch evt {
+                                            case .textDelta(let txt):
+                                                self.aiStreamingText = (self.aiStreamingText ?? "") + txt
+                                            case .completed:
+                                                if let text = self.aiStreamingText, !text.isEmpty {
+                                                    self.aiMessages.append(AIMessage(role: "assistant", text: text))
+                                                }
+                                                self.aiStreamingText = nil
+                                                self.aiIsStreaming = false
+                                                self.isLoading = false
+                                                self.aiStatus = ""
+                                            case .requiresAction:
+                                                // Nested tool calls not handled in this first version.
+                                                self.statusMessage = "AI requested nested tools; unsupported in this version."
+                                            }
+                                        }
                                     }
                                 } catch {
-                                    outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                    await MainActor.run {
+                                        self.statusMessage = "AI tool submit error: \(error.localizedDescription)"
+                                        self.aiIsStreaming = false
+                                        self.aiStreamingText = nil
+                                        self.isLoading = false
+                                        self.aiStatus = ""
+                                    }
                                 }
                             }
-                        } else if call.name == "run_python" {
-                            if let json = call.argumentsJSON.data(using: .utf8),
-                               let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-                               let code = dict["code"] as? String {
-                                do {
-                                    let inputURL = try self.writeCurrentDocumentToTmp()
-                                    let result = try PythonRunner.run(code: code, inputPath: inputURL)
-                                    let desc: [String: Any] = [
-                                        "stdout": result.stdout,
-                                        "stderr": result.stderr,
-                                        "output_files": result.outputFiles.map { $0.path }
-                                    ]
-                                    let outputJSON = String(data: try JSONSerialization.data(withJSONObject: desc), encoding: .utf8) ?? "{}"
-                                    outputs.append(.init(toolCallId: call.id, output: outputJSON))
-                                } catch {
-                                    outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
-                                }
+                        case .completed:
+                            if let text = self.aiStreamingText, !text.isEmpty {
+                                self.aiMessages.append(AIMessage(role: "assistant", text: text))
                             }
+                            self.aiStreamingText = nil
+                            self.aiIsStreaming = false
+                            self.isLoading = false
+                            self.aiStatus = ""
                         }
-                    }
-
-                    // Submit outputs
-                    let final = try await OpenAIClient.submitToolOutputs(apiKey: apiKey, responseId: responseId, toolOutputs: outputs)
-                    let text = OpenAIClient.extractText(final) ?? ""
-                    await MainActor.run {
-                        self.statusMessage = "AI: \(text.prefix(120))"
-                        self.isLoading = false
-                        self.aiStatus = ""
-                    }
-                } else {
-                    let text = OpenAIClient.extractText(resp) ?? ""
-                    await MainActor.run {
-                        self.statusMessage = "AI: \(text.prefix(120))"
-                        self.isLoading = false
-                        self.aiStatus = ""
                     }
                 }
             } catch {
                 await MainActor.run {
                     self.statusMessage = "AI error: \(error.localizedDescription)"
+                    self.aiIsStreaming = false
+                    self.aiStreamingText = nil
                     self.isLoading = false
                     self.aiStatus = ""
                 }
             }
         }
+    }
+
+    func cancelAIStream() {
+        aiStreamTask?.cancel()
+        aiIsStreaming = false
+        aiStreamingText = nil
+        aiStatus = "Stopped"
+        isLoading = false
+    }
+
+    func clearAIConversation() {
+        aiMessages.removeAll()
+        aiStreamingText = nil
+        aiStatus = ""
     }
 
     private static func agentSystemPrompt() -> String {
