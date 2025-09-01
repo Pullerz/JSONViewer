@@ -13,7 +13,7 @@ final class AppViewModel: ObservableObject {
         case jsonl
     }
 
-    enum ContentPresentation {
+    enum ContentPresentation: Hashable {
         case text
         case tree
     }
@@ -50,6 +50,9 @@ final class AppViewModel: ObservableObject {
     @Published var searchText: String = ""
     @Published var indexingProgress: Double?
 
+    // Work management
+    private var currentComputeTask: Task<Void, Never>?
+
     var selectedRow: JSONLRow? {
         guard let id = selectedRowID else { return nil }
         return jsonlRows.first(where: { $0.id == id })
@@ -72,6 +75,8 @@ final class AppViewModel: ObservableObject {
         searchText = ""
         indexingProgress = nil
         previewCache.removeAllObjects()
+        currentComputeTask?.cancel()
+        currentComputeTask = nil
     }
 
     func handlePaste(text: String) {
@@ -86,19 +91,22 @@ final class AppViewModel: ObservableObject {
         defer { isLoading = false }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let data = trimmed.data(using: .utf8), (try? JSONSerialization.jsonObject(with: data)) != nil {
-            do {
-                let pretty = try JSONPrettyPrinter.pretty(data: data)
-                prettyJSON = pretty
-                currentTreeRoot = try? JSONTreeBuilder.build(from: data)
-                presentation = .tree
-                mode = .json
-                statusMessage = "Pasted JSON"
-                return
-            } catch {
-                // fall through
+        if let first = trimmed.first, first == "{" || first == "[" {
+            currentComputeTask?.cancel()
+            currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                guard let data = trimmed.data(using: .utf8) else { return }
+                let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? (String(data: data, encoding: .utf8) ?? "")
+                let tree = try? JSONTreeBuilder.build(from: data)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.prettyJSON = pretty
+                    self.currentTreeRoot = tree
+                    self.presentation = .tree
+                    self.mode = .json
+                    self.statusMessage = "Pasted JSON"
+                }
             }
+            return
         }
 
         // Treat as JSONL: do not pretty-print all lines to keep paste fast
@@ -133,19 +141,27 @@ final class AppViewModel: ObservableObject {
 
         let ext = url.pathExtension.lowercased()
         if ext == "json" {
-            do {
-                let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-                let pretty = try JSONPrettyPrinter.pretty(data: data)
-                prettyJSON = pretty
-                currentTreeRoot = try? JSONTreeBuilder.build(from: data)
-                presentation = .tree
-                mode = .json
-                statusMessage = "Loaded JSON (\(formattedByteCount(data.count)))"
-                return
-            } catch {
-                statusMessage = "Failed to load JSON"
-                return
+            currentComputeTask?.cancel()
+            currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                guard let self else { return }
+                do {
+                    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+                    let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? (String(data: data, encoding: .utf8) ?? "")
+                    let tree = try? JSONTreeBuilder.build(from: data)
+                    await MainActor.run {
+                        self.prettyJSON = pretty
+                        self.currentTreeRoot = tree
+                        self.presentation = .tree
+                        self.mode = .json
+                        self.statusMessage = "Loaded JSON (\(self.formattedByteCount(data.count)))"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.statusMessage = "Failed to load JSON"
+                    }
+                }
             }
+            return
         }
 
         // JSONL path: build index in background for scalability
@@ -156,20 +172,27 @@ final class AppViewModel: ObservableObject {
         indexingProgress = 0
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try index.build { progress in
+                try index.build(progress: { progress in
                     Task { @MainActor in
                         self?.indexingProgress = progress
                         self?.statusMessage = "Indexing… \(Int(progress * 100))%"
                     }
-                }
-                await MainActor.run {
-                    self?.jsonlRowCount = index.lineCount
-                    self?.statusMessage = "Indexed \(index.lineCount) rows"
-                    if self?.selectedRowID == nil && index.lineCount > 0 {
-                        self?.selectedRowID = 0
+                }, onUpdate: { count in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.jsonlRowCount = count
+                        if self.selectedRowID == nil && count > 0 {
+                            self.selectedRowID = 0
+                            Task { _ = await self.updateTreeForSelectedRow() }
+                        } else if let sel = self.selectedRowID, sel < count {
+                            // If the selected row becomes available during indexing, update view
+                            Task { _ = await self.updateTreeForSelectedRow() }
+                        }
                     }
+                })
+                await MainActor.run {
+                    self?.statusMessage = "Indexed \(index.lineCount) rows"
                 }
-                await self?.updateTreeForSelectedRow()
             } catch {
                 await MainActor.run {
                     self?.statusMessage = "Failed to index JSONL"
@@ -210,24 +233,43 @@ final class AppViewModel: ObservableObject {
     func updateTreeForSelectedRow() async -> Bool {
         guard mode == .jsonl, let id = selectedRowID else { return false }
 
-        if let index = jsonlIndex {
-            // File-backed: read on demand
-            let raw = (try? index.readLine(at: id, maxBytes: nil)) ?? ""
-            let data = raw.data(using: .utf8) ?? Data()
-            prettyJSON = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
-            currentTreeRoot = try? JSONTreeBuilder.build(from: data)
-            presentation = .tree
-            return true
-        } else {
+        currentComputeTask?.cancel()
+        guard let index = jsonlIndex else {
             // Pasted JSONL
             guard let row = selectedRow else { return false }
             let raw = row.raw
-            let data = raw.data(using: .utf8) ?? Data()
-            prettyJSON = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
-            currentTreeRoot = try? JSONTreeBuilder.build(from: data)
-            presentation = .tree
+            currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                let data = raw.data(using: .utf8) ?? Data()
+                let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
+                let tree = try? JSONTreeBuilder.build(from: data)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.prettyJSON = pretty
+                    self.currentTreeRoot = tree
+                    self.presentation = .tree
+                }
+            }
             return true
         }
+
+        // File-backed: only proceed if line slice is available
+        guard let _ = index.sliceRange(forLine: id) else {
+            return false
+        }
+
+        currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let raw = (try? index.readLine(at: id, maxBytes: nil)) ?? ""
+            let data = raw.data(using: .utf8) ?? Data()
+            let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
+            let tree = try? JSONTreeBuilder.build(from: data)
+            await MainActor.run {
+                guard let self else { return }
+                self.prettyJSON = pretty
+                self.currentTreeRoot = tree
+                self.presentation = .tree
+            }
+        }
+        return true
     }
 
     func didSelectTreeNode(_ node: JSONTreeNode) {

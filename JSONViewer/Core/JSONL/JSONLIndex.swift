@@ -12,7 +12,8 @@ final class JSONLIndex {
         self.url = url
     }
 
-    func build(progress: ((Double) -> Void)? = nil) throws {
+    // Build index progressively, reporting progress and current lineCount after each chunk.
+    func build(progress: ((Double) -> Void)? = nil, onUpdate: ((Int) -> Void)? = nil) throws {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 
@@ -38,6 +39,7 @@ final class JSONLIndex {
 
             position += UInt64(chunk.count)
             progress?(fileSize > 0 ? Double(position) / Double(fileSize) : 0)
+            onUpdate?(lineCount)
             if chunk.count < chunkSize { break }
         }
 
@@ -46,6 +48,7 @@ final class JSONLIndex {
             offsets.append(fileSize)
         }
         progress?(1.0)
+        onUpdate?(lineCount)
     }
 
     var lineCount: Int {
