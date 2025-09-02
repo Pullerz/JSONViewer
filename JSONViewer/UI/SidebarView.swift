@@ -76,6 +76,7 @@ struct SidebarView: View {
                                     ForEach(filtered, id: \.self) { i in
                                         SidebarRowView(viewModel: viewModel, id: i)
                                             .id(i)
+                                            .tag(i)
                                             .onAppear {
                                                 if let last = filtered.last, i == last { isAtBottom = true }
                                             }
@@ -87,6 +88,7 @@ struct SidebarView: View {
                                     ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
                                         SidebarRowView(viewModel: viewModel, id: i)
                                             .id(i)
+                                            .tag(i)
                                             .onAppear {
                                                 if i == viewModel.jsonlRowCount - 1 { isAtBottom = true }
                                             }
@@ -103,6 +105,8 @@ struct SidebarView: View {
                                     let shouldPin = viewModel.selectedRowID == lastRowCount - 1
                                     lastRowCount = newCount
                                     if shouldPin && newCount > 0 {
+                                        // Also move the selection to the new last row so the detail view matches what's shown at bottom.
+                                        viewModel.selectedRowID = newCount - 1
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                             withAnimation(.easeInOut(duration: 0.15)) {
                                                 proxy.scrollTo(newCount - 1, anchor: .bottom)
@@ -137,6 +141,7 @@ struct SidebarView: View {
                                 }
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())
+                                .tag(row.id)
                                 .onAppear {
                                     if let last = filteredRows.last?.id, row.id == last { isAtBottom = true }
                                 }
