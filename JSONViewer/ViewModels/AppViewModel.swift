@@ -48,6 +48,7 @@ final class AppViewModel: ObservableObject {
     var jsonlIndex: JSONLIndex?
     @Published var jsonlRowCount: Int = 0
     private let previewCache = NSCache<NSNumber, NSString>()
+    private let previewSemaphore = DispatchSemaphore(value: 4)
 
     @Published var selectedRowID: Int?
     @Published var isLoading: Bool = false
@@ -55,7 +56,12 @@ final class AppViewModel: ObservableObject {
     @Published var searchText: String = ""
     @Published var indexingProgress: Double?
     @Published var lastUpdatedAt: Date?
-
+    
+    init() {
+        // Prevent unbounded memory growth while scrolling many rows
+        previewCache.countLimit = 5000
+    }
+    
     // Command bar
     @Published var commandMode: CommandBarView.Mode = .jq
     @Published var commandText: String = ""
@@ -235,9 +241,7 @@ final class AppViewModel: ObservableObject {
                 }, onUpdate: { count in
                     Task { @MainActor in
                         guard let self else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            self.jsonlRowCount = count
-                        }
+                        self.jsonlRowCount = count
                         self.lastUpdatedAt = Date()
                         if self.selectedRowID == nil && count > 0 {
                             self.selectedRowID = 0
@@ -279,6 +283,8 @@ final class AppViewModel: ObservableObject {
         }
 
         DispatchQueue.global(qos: .utility).async {
+            self.previewSemaphore.wait()
+            defer { self.previewSemaphore.signal() }
             let text = (try? index.readLine(at: row, maxBytes: 200)) ?? ""
             let preview = String(text.prefix(160))
             self.previewCache.setObject(preview as NSString, forKey: NSNumber(value: row))
@@ -417,9 +423,7 @@ final class AppViewModel: ObservableObject {
                 do {
                     try index.refresh(progress: { _ in }, onUpdate: { count in
                         Task { @MainActor in
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                self?.jsonlRowCount = count
-                            }
+                            self?.jsonlRowCount = count
                             self?.lastUpdatedAt = Date()
                         }
                     })

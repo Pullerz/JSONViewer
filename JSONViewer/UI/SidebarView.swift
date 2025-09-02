@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
-    @State private var previews: [Int: String] = [:]
     @State private var lastRowCount: Int = 0
     @State private var isAtBottom: Bool = false
 
@@ -73,37 +72,31 @@ struct SidebarView: View {
                         // File-backed, virtualized list
                         ScrollViewReader { proxy in
                             List(selection: $viewModel.selectedRowID) {
-                                let ids: [Int] = viewModel.sidebarFilteredRowIDs ?? Array(0..<viewModel.jsonlRowCount)
-                                ForEach(ids, id: \.self) { i in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Row \(i)")
-                                            .font(.callout)
-                                            .foregroundStyle(.secondary)
-                                        Text(previews[i] ?? "Loading…")
-                                            .font(.system(.caption, design: .monospaced))
-                                            .lineLimit(2)
-                                    }
-                                    .id(i)
-                                    .task(id: i) {
-                                        if previews[i] == nil {
-                                            viewModel.preview(for: i) { text in
-                                                // Ensure update happens next runloop to avoid update-during-view warnings
-                                                DispatchQueue.main.async {
-                                                    previews[i] = text
-                                                }
+                                if let filtered = viewModel.sidebarFilteredRowIDs {
+                                    ForEach(filtered, id: \.self) { i in
+                                        SidebarRowView(viewModel: viewModel, id: i)
+                                            .id(i)
+                                            .onAppear {
+                                                if let last = filtered.last, i == last { isAtBottom = true }
                                             }
-                                        }
+                                            .onDisappear {
+                                                if let last = filtered.last, i == last { isAtBottom = false }
+                                            }
                                     }
-                                    .padding(.vertical, 4)
-                                    .contentShape(Rectangle())
-                                    .onAppear {
-                                        if let last = ids.last, i == last { isAtBottom = true }
-                                    }
-                                    .onDisappear {
-                                        if let last = ids.last, i == last { isAtBottom = false }
+                                } else {
+                                    ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
+                                        SidebarRowView(viewModel: viewModel, id: i)
+                                            .id(i)
+                                            .onAppear {
+                                                if i == viewModel.jsonlRowCount - 1 { isAtBottom = true }
+                                            }
+                                            .onDisappear {
+                                                if i == viewModel.jsonlRowCount - 1 { isAtBottom = false }
+                                            }
                                     }
                                 }
                             }
+                            .listStyle(.plain)
                             .onChange(of: viewModel.jsonlRowCount) { newCount in
                                 // If user had last row selected, keep them pinned to bottom (only when not filtering)
                                 if viewModel.sidebarFilteredRowIDs == nil {
@@ -152,6 +145,7 @@ struct SidebarView: View {
                                 }
                             }
                         }
+                        .listStyle(.plain)
                         .overlay(alignment: .bottom) { if !isAtBottom && !filteredRows.isEmpty { footerPill() } }
                     }
                 case .json:
