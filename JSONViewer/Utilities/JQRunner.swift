@@ -75,16 +75,37 @@ struct JQRunner {
         proc.standardOutput = outPipe
         proc.standardError = errPipe
 
+        // Ensure we capture output concurrently to avoid pipe deadlocks on large output
+        var stdoutData = Data()
+        var stderrData = Data()
+        let group = DispatchGroup()
+
+        // Start readers BEFORE running the process to avoid race where output fills buffer
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+            // Copy to avoid mutation races (single writer here)
+            stdoutData = data
+            group.leave()
+        }
+
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            let data = errPipe.fileHandleForReading.readDataToEndOfFile()
+            stderrData = data
+            group.leave()
+        }
+
         try proc.run()
 
-        // Feed input
+        // Feed input (write then close stdin)
         try inPipe.fileHandleForWriting.write(contentsOf: input)
         try inPipe.fileHandleForWriting.close()
 
+        // Wait for process to finish and for pipes to drain
         proc.waitUntilExit()
+        group.wait()
 
-        let stdoutData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = errPipe.fileHandleForReading.readDataToEndOfFile()
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: stderrData, encoding: .utf8) ?? ""
         let status = proc.terminationStatus
