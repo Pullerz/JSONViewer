@@ -85,6 +85,11 @@ struct OpenAIStreamClient {
             throw OpenAIClient.ClientError.http(http.statusCode, text)
         }
 
+        // Track current response id and in-flight function calls to emit requiresAction when args complete.
+        var currentResponseId: String? = nil
+        var toolCallByItemId: [String: (callId: String, name: String)] = [:] // item_id (fc_*) -> (tool_call_id, name)
+        var argBuffer: [String: String] = [:] // item_id -> args so far
+
         var buffer = Data()
         for try await chunk in bytes {
             buffer.append(chunk)
@@ -116,7 +121,59 @@ struct OpenAIStreamClient {
                             print("[SSE] data:", dp)
                             #endif
                             if let obj = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] {
-                                // Heuristics to find deltas, required actions, or completion
+
+                                // Capture response id if present
+                                if let resp = obj["response"] as? [String: Any],
+                                   let rid = resp["id"] as? String {
+                                    currentResponseId = rid
+                                }
+
+                                // New Responses streaming types
+                                if let t = obj["type"] as? String {
+
+                                    // Text delta events
+                                    if t == "response.output_text.delta", let txt = obj["delta"] as? String {
+                                        onEvent(.textDelta(txt)); continue
+                                    }
+                                    if t == "response.message.delta" {
+                                        if let txt = obj["delta"] as? String { onEvent(.textDelta(txt)); continue }
+                                    }
+
+                                    // Function call lifecycle
+                                    if t == "response.output_item.added",
+                                       let item = obj["item"] as? [String: Any],
+                                       let itemType = item["type"] as? String, itemType == "function_call" {
+                                        if let itemId = item["id"] as? String,
+                                           let name = item["name"] as? String {
+                                            let callId = (item["call_id"] as? String) ?? itemId
+                                            toolCallByItemId[itemId] = (callId: callId, name: name)
+                                        }
+                                        continue
+                                    }
+
+                                    if t == "response.function_call_arguments.delta" {
+                                        if let itemId = obj["item_id"] as? String,
+                                           let d = obj["delta"] as? String {
+                                            argBuffer[itemId, default: ""] += d
+                                        }
+                                        continue
+                                    }
+
+                                    if t == "response.function_call_arguments.done" {
+                                        if let itemId = obj["item_id"] as? String {
+                                            let args = (obj["arguments"] as? String) ?? argBuffer[itemId] ?? ""
+                                            if let meta = toolCallByItemId[itemId] {
+                                                onEvent(.requiresAction(responseId: currentResponseId ?? "", toolCalls: [(id: meta.callId, name: meta.name, argumentsJSON: args)]))
+                                                // Clean up buffers for this call
+                                                argBuffer[itemId] = nil
+                                                toolCallByItemId[itemId] = nil
+                                                continue
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Legacy \"required_action\" shape (non-SSE-tool lifecycle)
                                 if let required = obj["required_action"] as? [String: Any] {
                                     var responseId = obj["id"] as? String ?? ""
                                     // Responses API sometimes wraps tool calls under submit_tool_outputs key
@@ -156,33 +213,7 @@ struct OpenAIStreamClient {
                                     }
                                 }
 
-                                // Extract text delta possibilities
-                                if let t = obj["type"] as? String, t.contains("delta") {
-                                    if let delta = obj["delta"] as? [String: Any] {
-                                        if let text = delta["output_text"] as? String {
-                                            #if DEBUG
-                                            print("[SSE] textDelta (direct) len:", text.count)
-                                            #endif
-                                            onEvent(.textDelta(text))
-                                            continue
-                                        }
-                                        if let content = delta["content"] as? [[String: Any]] {
-                                            for item in content {
-                                                if let itemType = item["type"] as? String,
-                                                   (itemType.contains("output_text") || itemType == "text"),
-                                                   let txt = item["text"] as? String {
-                                                    #if DEBUG
-                                                    print("[SSE] textDelta (content) len:", txt.count)
-                                                    #endif
-                                                    onEvent(.textDelta(txt))
-                                                }
-                                            }
-                                            continue
-                                        }
-                                    }
-                                }
-
-                                // Non-delta but direct text output
+                                // Fallback: Non-delta but direct text output shapes
                                 if let text = obj["output_text"] as? String, !text.isEmpty {
                                     #if DEBUG
                                     print("[SSE] text (output_text) len:", text.count)
@@ -204,7 +235,7 @@ struct OpenAIStreamClient {
                                     continue
                                 }
 
-                                // Completed?
+                                // Completed via status in a non-[DONE] payload
                                 if let status = obj["status"] as? String, status == "completed" {
                                     #if DEBUG
                                     print("[SSE] completed (status)")

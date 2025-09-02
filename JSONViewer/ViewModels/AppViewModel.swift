@@ -702,6 +702,12 @@ final class AppViewModel: ObservableObject {
                                     }
                                 }
                                 do {
+                                    // Start second stream (continuation) visibly
+                                    await MainActor.run {
+                                        self.aiIsStreaming = true
+                                        if self.aiStreamingText == nil { self.aiStreamingText = "" }
+                                        self.aiStatus = "Using tools…"
+                                    }
                                     try await OpenAIStreamClient.streamSubmitToolOutputs(
                                         apiKey: apiKey,
                                         responseId: responseId,
