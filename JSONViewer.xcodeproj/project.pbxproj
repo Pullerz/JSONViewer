@@ -399,7 +399,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"JSONViewer/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JSONViewer/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_CFBundleName = Prism;
 				INFOPLIST_KEY_CFBundleDocumentTypes = (
@@ -449,7 +450,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"JSONViewer/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JSONViewer/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				INFOPLIST_KEY_CFBundleName = Prism;
 				INFOPLIST_KEY_CFBundleDocumentTypes = (
