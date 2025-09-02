@@ -65,9 +65,18 @@ struct OpenAIStreamClient {
     // Generic SSE reader for OpenAI Responses
     private static func streamSSE(request: URLRequest, onEvent: @escaping (SSEEvent) -> Void) async throws {
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw OpenAIClient.ClientError.http(code, "Non-200 streaming response")
+        guard let http = response as? HTTPURLResponse else {
+            throw OpenAIClient.ClientError.badResponse
+        }
+        if !(200..<300).contains(http.statusCode) {
+            // Try to fetch error body for better diagnostics
+            do {
+                let (data, _) = try await URLSession.shared.data(for: request)
+                let text = String(data: data, encoding: .utf8) ?? ""
+                throw OpenAIClient.ClientError.http(http.statusCode, text.isEmpty ? "Non-200 streaming response" : text)
+            } catch {
+                throw OpenAIClient.ClientError.http(http.statusCode, "Non-200 streaming response")
+            }
         }
 
         var buffer = Data()

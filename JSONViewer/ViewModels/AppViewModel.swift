@@ -624,6 +624,10 @@ final class AppViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let apiKey = OpenAIClient.loadAPIKeyFromDefaultsOrEnv() else {
             statusMessage = "Missing OpenAI API key (set in Preferences > AI or OPENAI_API_KEY env var)."
+            // Surface this in the AI sidebar so it's obvious why nothing streamed.
+            aiMessages.append(AIMessage(role: "assistant", text: "Missing OpenAI API key. Open Preferences → AI and paste your key, or set the OPENAI_API_KEY environment variable in your run scheme."))
+            aiIsStreaming = false
+            aiStreamingText = nil
             return
         }
 
@@ -724,6 +728,7 @@ final class AppViewModel: ObservableObject {
                                 } catch {
                                     await MainActor.run {
                                         self.statusMessage = "AI tool submit error: \(error.localizedDescription)"
+                                        self.aiMessages.append(AIMessage(role: "assistant", text: "AI tool submit error: \(error.localizedDescription)"))
                                         self.aiIsStreaming = false
                                         self.aiStreamingText = nil
                                         self.isLoading = false
@@ -745,6 +750,7 @@ final class AppViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.statusMessage = "AI error: \(error.localizedDescription)"
+                    self.aiMessages.append(AIMessage(role: "assistant", text: "AI error: \(error.localizedDescription)"))
                     self.aiIsStreaming = false
                     self.aiStreamingText = nil
                     self.isLoading = false
