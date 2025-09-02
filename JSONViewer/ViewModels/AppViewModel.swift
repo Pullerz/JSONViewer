@@ -85,6 +85,7 @@ final class AppViewModel: ObservableObject {
 
     // Work management
     private var currentComputeTask: Task<Void, Never>?
+    private var indexTask: Task<Void, Never>?
     private var fileWatcher: FileWatcher?
     private var fileChangeDebounce: Task<Void, Never>?
     #if os(macOS)
@@ -117,6 +118,8 @@ final class AppViewModel: ObservableObject {
         previewCache.removeAllObjects()
         currentComputeTask?.cancel()
         currentComputeTask = nil
+        indexTask?.cancel()
+        indexTask = nil
         fileChangeDebounce?.cancel()
         fileChangeDebounce = nil
         fileWatcher?.cancel()
@@ -230,7 +233,9 @@ final class AppViewModel: ObservableObject {
         let index = JSONLIndex(url: url)
         jsonlIndex = index
         indexingProgress = 0
-        Task.detached(priority: .userInitiated) { [weak self] in
+        jsonlRowCount = 0
+        indexTask?.cancel()
+        indexTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try index.build(progress: { progress in
                     Task { @MainActor in
@@ -419,7 +424,8 @@ final class AppViewModel: ObservableObject {
             }
         case .jsonl:
             guard let index = jsonlIndex else { return }
-            Task.detached(priority: .userInitiated) { [weak self] in
+            indexTask?.cancel()
+            indexTask = Task.detached(priority: .userInitiated) { [weak self] in
                 do {
                     try index.refresh(progress: { _ in }, onUpdate: { count in
                         Task { @MainActor in
