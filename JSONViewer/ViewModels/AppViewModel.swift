@@ -256,14 +256,17 @@ final class AppViewModel: ObservableObject {
                             Task { _ = await self.updateTreeForSelectedRow() }
                         }
                     }
-                })
+                }, shouldCancel: { Task.isCancelled })
                 await MainActor.run {
                     self?.statusMessage = "Indexed \(index.lineCount) rows"
                     self?.lastUpdatedAt = Date()
                 }
             } catch {
-                await MainActor.run {
-                    self?.statusMessage = "Failed to index JSONL"
+                // Treat cancellation as non-fatal (likely caused by quick file close/open or replacement)
+                if (error as? CancellationError) == nil {
+                    await MainActor.run {
+                        self?.statusMessage = "Failed to index JSONL"
+                    }
                 }
             }
         }
@@ -432,7 +435,7 @@ final class AppViewModel: ObservableObject {
                             self?.jsonlRowCount = count
                             self?.lastUpdatedAt = Date()
                         }
-                    })
+                    }, shouldCancel: { Task.isCancelled })
                     await MainActor.run {
                         // Clear any stale previews because the entire file was re-indexed
                         self?.previewCache.removeAllObjects()

@@ -24,8 +24,17 @@ final class JSONLIndex {
     }
 
     // Build index progressively, reporting progress and current lineCount after each chunk.
-    func build(progress: ((Double) -> Void)? = nil, onUpdate: ((Int) -> Void)? = nil) throws {
+    // The shouldCancel closure allows callers (Tasks) to request early exit during file save bursts.
+    func build(progress: ((Double) -> Void)? = nil,
+               onUpdate: ((Int) -> Void)? = nil,
+               shouldCancel: (() -> Bool)? = nil) throws {
         try scanQueue.sync {
+            @inline(__always) func cancelled() -> Bool {
+                return shouldCancel?() ?? false
+            }
+
+            if cancelled() { throw CancellationError() }
+
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
 
@@ -35,10 +44,14 @@ final class JSONLIndex {
             offsets = [0]
             var position: UInt64 = 0
             while true {
+                if cancelled() { throw CancellationError() }
+
                 try handle.seek(toOffset: position)
                 guard let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty else {
                     break
                 }
+
+                if cancelled() { throw CancellationError() }
 
                 chunk.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
                     guard let base = ptr.bindMemory(to: UInt8.self).baseAddress else { return }
@@ -56,6 +69,8 @@ final class JSONLIndex {
                 if chunk.count < chunkSize { break }
             }
 
+            if cancelled() { throw CancellationError() }
+
             // Ensure EOF offset is present for final line slicing
             if offsets.last != fileSize {
                 offsets.append(fileSize)
@@ -66,8 +81,10 @@ final class JSONLIndex {
     }
 
     // Refresh the index for file changes. Always rebuild to avoid duplicating rows when files are rewritten.
-    func refresh(progress: ((Double) -> Void)? = nil, onUpdate: ((Int) -> Void)? = nil) throws {
-        try build(progress: progress, onUpdate: onUpdate)
+    func refresh(progress: ((Double) -> Void)? = nil,
+                 onUpdate: ((Int) -> Void)? = nil,
+                 shouldCancel: (() -> Bool)? = nil) throws {
+        try build(progress: progress, onUpdate: onUpdate, shouldCancel: shouldCancel)
     }
 
     var lineCount: Int {
