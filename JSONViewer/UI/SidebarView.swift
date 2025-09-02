@@ -7,6 +7,9 @@ struct SidebarView: View {
     // Local search text so typing doesn't publish through AppViewModel each keystroke
     @State private var sidebarSearchLocal: String = ""
     @State private var sidebarSearchCommitDebounce: Task<Void, Never>? = nil
+    // Track whether we've initialized the local search text from the shared model.
+    // Prevents repeated .onAppear resets that can fight with user typing and cause oscillation.
+    @State private var didInitLocalSearch: Bool = false
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -178,7 +181,15 @@ struct SidebarView: View {
         }
         .onAppear {
             lastRowCount = viewModel.jsonlRowCount
-            sidebarSearchLocal = viewModel.searchText
+            if !didInitLocalSearch {
+                sidebarSearchLocal = viewModel.searchText
+                didInitLocalSearch = true
+            }
+        }
+        .onDisappear {
+            // Avoid background commits when the view is torn down and rebuilt.
+            sidebarSearchCommitDebounce?.cancel()
+            sidebarSearchCommitDebounce = nil
         }
         .onChange(of: sidebarSearchLocal) { newVal in
             // Debounce committing to the shared model to avoid global re-renders per keystroke
