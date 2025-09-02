@@ -107,8 +107,12 @@ final class JSONLIndex {
     }
 
     func sliceRange(forLine index: Int) -> Range<UInt64>? {
-        guard index >= 0 && index + 1 < offsets.count else { return nil }
-        return offsets[index]..<offsets[index + 1]
+        let local = offsets
+        guard index >= 0 && index + 1 < local.count else { return nil }
+        let start = local[index]
+        let end = local[index + 1]
+        guard start <= end else { return nil }
+        return start..<end
     }
 
     func readLine(at index: Int, maxBytes: Int? = nil) throws -> String? {
