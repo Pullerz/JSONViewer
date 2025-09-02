@@ -44,6 +44,7 @@ struct OpenAIStreamClient {
     // Stream a continuation by submitting tool outputs via Responses create with response_id
     static func streamSubmitToolOutputs(
         apiKey: String,
+        model: String,
         responseId: String,
         toolOutputs: [OpenAIClient.ToolOutput],
         onEvent: @escaping (SSEEvent) -> Void
@@ -55,6 +56,7 @@ struct OpenAIStreamClient {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let payload: [String: Any] = [
+            "model": model,
             "response_id": responseId,
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
             "stream": true
