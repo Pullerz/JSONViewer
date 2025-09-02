@@ -29,6 +29,10 @@
 			<array>
 				<string>public.json</string>
 			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>json</string>
+			</array>
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
@@ -38,6 +42,11 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>org.jsonlines.jsonl</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>jsonl</string>
+				<string>ndjson</string>
 			</array>
 		</dict>
 	</array>
@@ -59,9 +68,13 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>jsonl</string>
+					<string>ndjson</string>
 				</array>
 				<key>public.mime-type</key>
-				<string>application/x-ndjson</string>
+				<array>
+					<string>application/x-ndjson</string>
+					<string>application/ndjson</string>
+				</array>
 			</dict>
 		</dict>
 	</array>
