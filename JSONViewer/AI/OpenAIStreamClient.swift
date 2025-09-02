@@ -69,6 +69,9 @@ struct OpenAIStreamClient {
         guard let http = response as? HTTPURLResponse else {
             throw OpenAIClient.ClientError.badResponse
         }
+        #if DEBUG
+        print("[SSE] HTTP status:", http.statusCode)
+        #endif
         if !(200..<300).contains(http.statusCode) {
             // Consume the error body from the same streaming response for full details.
             var errData = Data()
@@ -76,23 +79,42 @@ struct OpenAIStreamClient {
                 errData.append(chunk)
             }
             let text = String(data: errData, encoding: .utf8) ?? "Non-200 streaming response"
+            #if DEBUG
+            print("[SSE] Error body:", text)
+            #endif
             throw OpenAIClient.ClientError.http(http.statusCode, text)
         }
 
         var buffer = Data()
         for try await chunk in bytes {
             buffer.append(chunk)
-            // Split on double newlines (end of SSE event)
-            while let range = buffer.range(of: Data("\n\n".utf8)) {
+            // Split on double newlines (end of SSE event). Handle both LF and CRLF.
+            while true {
+                let lf2 = Data("\n\n".utf8)
+                let crlf2 = Data("\r\n\r\n".utf8)
+                let useRange = buffer.range(of: lf2) ?? buffer.range(of: crlf2)
+                guard let range = useRange else { break }
                 let eventData = buffer.subdata(in: 0..<range.lowerBound)
                 buffer.removeSubrange(0..<range.upperBound)
-                if let line = String(data: eventData, encoding: .utf8) {
+                if let raw = String(data: eventData, encoding: .utf8) {
+                    // Normalize line endings
+                    let line = raw.replacingOccurrences(of: "\r\n", with: "\n")
+                    #if DEBUG
+                    let preview = line.count > 500 ? String(line.prefix(500)) + "…" : line
+                    if !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        print("[SSE] event chunk:", preview)
+                    }
+                    #endif
                     // Parse SSE fields (we care about "data:" lines)
                     for s in line.split(separator: "\n") {
                         if s.hasPrefix("data:") {
                             let payload = s.dropFirst(5).trimmingCharacters(in: .whitespaces)
                             if payload == "[DONE]" { onEvent(.completed); return }
                             if payload.isEmpty { continue }
+                            #if DEBUG
+                            let dp = payload.count > 500 ? String(payload.prefix(500)) + "…" : payload
+                            print("[SSE] data:", dp)
+                            #endif
                             if let obj = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] {
                                 // Heuristics to find deltas, required actions, or completion
                                 if let required = obj["required_action"] as? [String: Any] {
@@ -126,6 +148,9 @@ struct OpenAIStreamClient {
                                             }
                                             return nil
                                         }
+                                        #if DEBUG
+                                        print("[SSE] requiresAction tool calls:", tuples.map { $0.1 })
+                                        #endif
                                         onEvent(.requiresAction(responseId: responseId, toolCalls: tuples))
                                         continue
                                     }
@@ -135,6 +160,9 @@ struct OpenAIStreamClient {
                                 if let t = obj["type"] as? String, t.contains("delta") {
                                     if let delta = obj["delta"] as? [String: Any] {
                                         if let text = delta["output_text"] as? String {
+                                            #if DEBUG
+                                            print("[SSE] textDelta (direct) len:", text.count)
+                                            #endif
                                             onEvent(.textDelta(text))
                                             continue
                                         }
@@ -143,6 +171,9 @@ struct OpenAIStreamClient {
                                                 if let itemType = item["type"] as? String,
                                                    (itemType.contains("output_text") || itemType == "text"),
                                                    let txt = item["text"] as? String {
+                                                    #if DEBUG
+                                                    print("[SSE] textDelta (content) len:", txt.count)
+                                                    #endif
                                                     onEvent(.textDelta(txt))
                                                 }
                                             }
@@ -153,6 +184,9 @@ struct OpenAIStreamClient {
 
                                 // Non-delta but direct text output
                                 if let text = obj["output_text"] as? String, !text.isEmpty {
+                                    #if DEBUG
+                                    print("[SSE] text (output_text) len:", text.count)
+                                    #endif
                                     onEvent(.textDelta(text))
                                     continue
                                 }
@@ -161,6 +195,9 @@ struct OpenAIStreamClient {
                                         if let segType = seg["type"] as? String,
                                            (segType == "output_text" || segType == "text"),
                                            let txt = seg["text"] as? String {
+                                            #if DEBUG
+                                            print("[SSE] text (output) len:", txt.count)
+                                            #endif
                                             onEvent(.textDelta(txt))
                                         }
                                     }
@@ -169,6 +206,9 @@ struct OpenAIStreamClient {
 
                                 // Completed?
                                 if let status = obj["status"] as? String, status == "completed" {
+                                    #if DEBUG
+                                    print("[SSE] completed (status)")
+                                    #endif
                                     onEvent(.completed)
                                     return
                                 }
