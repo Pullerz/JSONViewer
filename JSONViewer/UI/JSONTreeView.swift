@@ -6,6 +6,14 @@ struct JSONTreeView: View {
     var onSelect: (JSONTreeNode) -> Void
     @FocusState private var findFocused: Bool
 
+    // Cache heavy rows computation so arbitrary AppViewModel changes (e.g. typing in AI/JQ)
+    // don't trigger an expensive full-tree traversal on every keystroke.
+    @State private var cachedRows: [RowItem] = []
+    @State private var lastRootId: UUID? = nil
+    @State private var lastQuery: String = ""
+    @State private var lastExpanded: Set<String> = []
+    @State private var queryDebounce: Task<Void, Never>? = nil
+
     private struct RowItem: Identifiable, Hashable {
         let id: UUID = UUID()
         let node: JSONTreeNode
@@ -42,8 +50,12 @@ struct JSONTreeView: View {
         return result
     }
 
-    private var visibleRows: [RowItem] {
-        guard let root else { return [] }
+    private func recomputeRows() {
+        guard let root else {
+            cachedRows = []
+            lastRootId = nil
+            return
+        }
         let q = viewModel.treeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let autoExpand = ancestorPathsForMatches(root: root, query: q)
         let expansionSet = viewModel.expandedPaths.union(autoExpand)
@@ -60,13 +72,15 @@ struct JSONTreeView: View {
         walk(root, depth: 0)
 
         if q.isEmpty {
-            return rows
+            cachedRows = rows
         } else {
-            // Filter out branches unrelated to matches, but keep ancestors (autoExpand)
-            return rows.filter { item in
+            cachedRows = rows.filter { item in
                 nodeMatches(item.node, query: q) || autoExpand.contains(item.node.path)
             }
         }
+        lastRootId = root.id
+        lastQuery = q
+        lastExpanded = viewModel.expandedPaths
     }
 
     private func toggle(_ node: JSONTreeNode) {
@@ -142,7 +156,7 @@ struct JSONTreeView: View {
 
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(visibleRows) { item in
+                            ForEach(cachedRows) { item in
                                 JSONTreeRowView(
                                     node: item.node,
                                     depth: item.depth,
@@ -163,6 +177,16 @@ struct JSONTreeView: View {
                 .onChange(of: viewModel.treeFindFocusToken) { _ in
                     findFocused = true
                 }
+                .onChange(of: viewModel.treeSearchQuery) { _ in
+                    // Recompute rows when the shared query changes.
+                    recomputeRows()
+                }
+                .onChange(of: viewModel.expandedPaths) { _ in
+                    recomputeRows()
+                }
+                .onChange(of: root?.id) { _ in
+                    recomputeRows()
+                }
                 .onAppear {
                     // Do not focus search by default
                     findFocused = false
@@ -170,6 +194,8 @@ struct JSONTreeView: View {
                     if viewModel.expandedPaths.isEmpty {
                         viewModel.expandedPaths.insert("")
                     }
+                    // Build rows for current query
+                    recomputeRows()
                 }
             } else {
                 VStack(spacing: 6) {

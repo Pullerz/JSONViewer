@@ -176,16 +176,21 @@ struct SidebarView: View {
         .onAppear {
             lastRowCount = viewModel.jsonlRowCount
         }
-        .onChange(of: viewModel.searchText) { _ in
+        .onChange(of: viewModel.searchText) { newVal in
             if viewModel.jsonlIndex != nil {
-                viewModel.runSidebarSearch()
+                if newVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.sidebarFilteredRowIDs = nil
+                } else {
+                    viewModel.runSidebarSearchDebounced()
+                }
             } else {
                 viewModel.sidebarFilteredRowIDs = nil
             }
         }
         .onChange(of: viewModel.jsonlRowCount) { _ in
             if viewModel.jsonlIndex != nil && !viewModel.searchText.isEmpty {
-                viewModel.runSidebarSearch()
+                // Re-run search when new rows arrive, but debounce to avoid thrashing during indexing
+                viewModel.runSidebarSearchDebounced()
             }
         }
         .onChange(of: viewModel.selectedRowID) { _ in

@@ -46,19 +46,18 @@ struct AppShellView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if viewModel.mode != .none {
-                        CommandBarView(
+                        CommandBarContainer(
                             mode: $viewModel.commandMode,
-                            text: $viewModel.commandText,
                             placeholder: viewModel.commandMode == .jq
                                 ? "jq filter (e.g. .items | length)"
                                 : "Use natural language to search or transform"
-                        ) {
+                        ) { text in
                             switch viewModel.commandMode {
                             case .jq:
-                                viewModel.runJQ(filter: viewModel.commandText)
+                                viewModel.runJQ(filter: text)
                             case .ai:
                                 withAnimation { isAISidebarVisible = true }
-                                viewModel.runAI(prompt: viewModel.commandText)
+                                viewModel.runAI(prompt: text)
                             }
                         }
                     }
@@ -262,5 +261,23 @@ struct AppShellView: View {
         #if os(macOS)
         NSWorkspace.shared.activateFileViewerSelecting([url])
         #endif
+    }
+}
+
+private struct CommandBarContainer: View {
+    @Binding var mode: CommandBarView.Mode
+    var placeholder: String
+    var onRun: (String) -> Void
+
+    @State private var textLocal: String = ""
+
+    var body: some View {
+        CommandBarView(
+            mode: $mode,
+            text: $textLocal,
+            placeholder: placeholder
+        ) {
+            onRun(textLocal)
+        }
     }
 }
