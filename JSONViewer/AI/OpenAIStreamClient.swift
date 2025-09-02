@@ -57,7 +57,7 @@ struct OpenAIStreamClient {
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let payload: [String: Any] = [
             "model": model,
-            "response_id": responseId,
+            "previous_response_id": responseId,
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
             // Responses API requires input; use an empty input to indicate continuation with tool outputs only.
             "input": [],

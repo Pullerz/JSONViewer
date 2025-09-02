@@ -72,7 +72,7 @@ struct OpenAIClient {
     }
 
     static func submitToolOutputs(apiKey: String, model: String, responseId: String, toolOutputs: [ToolOutput]) async throws -> [String: Any] {
-        // Per Responses API, submit tool outputs by POSTing to /v1/responses with the response_id and model
+        // Submit tool outputs by POSTing to /v1/responses with previous_response_id and model
         let url = URL(string: "https://api.openai.com/v1/responses")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -81,7 +81,7 @@ struct OpenAIClient {
 
         let payload: [String: Any] = [
             "model": model,
-            "response_id": responseId,
+            "previous_response_id": responseId,
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
             // Responses API requires the 'input' param even when only submitting tool outputs.
             "input": []
