@@ -1,0 +1,146 @@
+import SwiftUI
+import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
+
+struct AppCommands: Commands {
+    @FocusedValue(\.appViewModel) var viewModel: AppViewModel?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("New Window") {
+                openWindow(id: "main")
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+
+            Button("Open…") {
+                openFile()
+            }
+            .keyboardShortcut("o", modifiers: [.command])
+
+            // Open Recent submenu (File > Open Recent)
+            Menu("Open Recent") {
+                let recents = NSDocumentController.shared.recentDocumentURLs
+                if recents.isEmpty {
+                    Text("No Recent Documents")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(recents.prefix(15)), id: \.self) { url in
+                        Button(url.lastPathComponent) {
+                            openRecent(url)
+                        }
+                    }
+                    Divider()
+                    Button("Clear Menu") {
+                        NSDocumentController.shared.clearRecentDocuments(nil)
+                    }
+                }
+            }
+        }
+
+        // Cmd+F - find in raw (native find bar) or focus tree search
+        CommandGroup(after: .textEditing) {
+            Button("Find…") {
+                handleFindCommand()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+        }
+
+        // Override Paste to either forward to the first responder (text fields) or paste JSON into the viewer.
+        CommandGroup(before: .pasteboard) {
+            Button("Paste") {
+                handlePasteCommand()
+            }
+            .keyboardShortcut("v", modifiers: [.command])
+
+            Button("Paste JSON") {
+                pasteFromClipboard()
+            }
+            .keyboardShortcut("v", modifiers: [.command, .shift])
+        }
+    }
+
+    private func openRecent(_ url: URL) {
+        #if os(macOS)
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        #endif
+        if let vm = viewModel {
+            vm.loadFile(url: url)
+            return
+        }
+        // No focused window/VM. Open a new window and load the file into it.
+        openWindow(id: "main")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if let vm = WindowRegistry.shared.firstIdleViewModel() {
+                vm.loadFile(url: url)
+            }
+        }
+    }
+
+    private func isTextInputFocused() -> Bool {
+        #if os(macOS)
+        if let window = NSApp.keyWindow, let responder = window.firstResponder {
+            if responder is NSTextView { return true }
+            if responder is NSTextField { return true }
+            if let editor = window.fieldEditor(false, for: nil), responder === editor { return true }
+        }
+        #endif
+        return false
+    }
+
+    private func handleFindCommand() {
+        #if os(macOS)
+        if viewModel?.presentation == .tree {
+            viewModel?.focusTreeFind()
+        } else {
+            // Forward to native find bar in NSTextView
+            NSApp.sendAction(#selector(NSResponder.performTextFinderAction(_:)), to: nil, from: NSTextFinder.Action.showFindInterface)
+        }
+        #endif
+    }
+
+    private func handlePasteCommand() {
+        #if os(macOS)
+        // If no document yet, always treat paste as "Paste JSON" to avoid search fields capturing it.
+        if let vm = viewModel, vm.mode == .none {
+            pasteFromClipboard()
+            return
+        }
+        if isTextInputFocused() {
+            // forward to native paste for text inputs
+            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        } else {
+            pasteFromClipboard()
+        }
+        #endif
+    }
+
+    private func pasteFromClipboard() {
+        #if os(macOS)
+        guard let text = NSPasteboard.general.string(forType: .string), let vm = viewModel else { return }
+        vm.handlePaste(text: text)
+        #endif
+    }
+
+    private func openFile() {
+        #if os(macOS)
+        guard let vm = viewModel else { return }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.json]
+        if let jsonl = UTType(filenameExtension: "jsonl") {
+            types.append(jsonl)
+        }
+        types.append(.plainText)
+        panel.allowedContentTypes = types
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                vm.loadFile(url: url)
+            }
+        }
+        #endif
+    }
+}
