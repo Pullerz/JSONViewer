@@ -85,6 +85,7 @@ final class AppViewModel: ObservableObject {
 
     // Work management
     private var currentComputeTask: Task<Void, Never>?
+    private var indexTask: Task<Void, Never>?
     private var fileWatcher: FileWatcher?
     private var fileChangeDebounce: Task<Void, Never>?
     #if os(macOS)
@@ -117,6 +118,8 @@ final class AppViewModel: ObservableObject {
         previewCache.removeAllObjects()
         currentComputeTask?.cancel()
         currentComputeTask = nil
+        indexTask?.cancel()
+        indexTask = nil
         fileChangeDebounce?.cancel()
         fileChangeDebounce = nil
         fileWatcher?.cancel()
@@ -230,7 +233,9 @@ final class AppViewModel: ObservableObject {
         let index = JSONLIndex(url: url)
         jsonlIndex = index
         indexingProgress = 0
-        Task.detached(priority: .userInitiated) { [weak self] in
+        jsonlRowCount = 0
+        indexTask?.cancel()
+        indexTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try index.build(progress: { progress in
                     Task { @MainActor in
@@ -251,14 +256,17 @@ final class AppViewModel: ObservableObject {
                             Task { _ = await self.updateTreeForSelectedRow() }
                         }
                     }
-                })
+                }, shouldCancel: { Task.isCancelled })
                 await MainActor.run {
                     self?.statusMessage = "Indexed \(index.lineCount) rows"
                     self?.lastUpdatedAt = Date()
                 }
             } catch {
-                await MainActor.run {
-                    self?.statusMessage = "Failed to index JSONL"
+                // Treat cancellation as non-fatal (likely caused by quick file close/open or replacement)
+                if (error as? CancellationError) == nil {
+                    await MainActor.run {
+                        self?.statusMessage = "Failed to index JSONL"
+                    }
                 }
             }
         }
@@ -419,15 +427,24 @@ final class AppViewModel: ObservableObject {
             }
         case .jsonl:
             guard let index = jsonlIndex else { return }
-            Task.detached(priority: .userInitiated) { [weak self] in
+            indexTask?.cancel()
+            indexTask = Task.detached(priority: .userInitiated) { [weak self] in
                 do {
                     try index.refresh(progress: { _ in }, onUpdate: { count in
                         Task { @MainActor in
                             self?.jsonlRowCount = count
                             self?.lastUpdatedAt = Date()
                         }
-                    })
+                    }, shouldCancel: { Task.isCancelled })
                     await MainActor.run {
+                        // Clear any stale previews because the entire file was re-indexed
+                        self?.previewCache.removeAllObjects()
+                        // Ensure selection is valid for the new row count
+                        if let count = self?.jsonlRowCount {
+                            if let sel = self?.selectedRowID, sel >= count {
+                                self?.selectedRowID = count > 0 ? 0 : nil
+                            }
+                        }
                         // Rebuild current row view if one is selected
                         Task { _ = await self?.updateTreeForSelectedRow() }
                         self?.lastUpdatedAt = Date()
