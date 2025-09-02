@@ -788,32 +788,29 @@ final class AppViewModel: ObservableObject {
     }
 
     private static func toolSchemas() -> [[String: Any]] {
+        // Responses API expects top-level "name" for tools. Keep JSON Schema under "parameters".
         let runJQ: [String: Any] = [
             "type": "function",
-            "function": [
-                "name": "run_jq",
-                "description": "Run a jq filter on the current document (JSON or slurped JSONL). Returns jq output text.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "filter": ["type": "string", "description": "jq filter, e.g. .items | length"]
-                    ],
-                    "required": ["filter"]
-                ]
+            "name": "run_jq",
+            "description": "Run a jq filter on the current document (JSON or slurped JSONL). Returns jq output text.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "filter": ["type": "string", "description": "jq filter, e.g. .items | length"]
+                ],
+                "required": ["filter"]
             ]
         ]
         let runPy: [String: Any] = [
             "type": "function",
-            "function": [
-                "name": "run_python",
-                "description": "Execute Python 3 code on a temp copy of the current document. Read argv[1]; write optional outputs to argv[2]; print results to stdout.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "code": ["type": "string", "description": "Python 3 script source code"]
-                    ],
-                    "required": ["code"]
-                ]
+            "name": "run_python",
+            "description": "Execute Python 3 code on a temp copy of the current document. Read argv[1]; write optional outputs to argv[2]; print results to stdout.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "code": ["type": "string", "description": "Python 3 script source code"]
+                ],
+                "required": ["code"]
             ]
         ]
         return [runJQ, runPy]

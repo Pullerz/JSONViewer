@@ -96,8 +96,9 @@ struct OpenAIClient {
     // MARK: - Helpers
 
     static func extractToolCalls(_ response: [String: Any]) -> (responseId: String, calls: [ToolCall])? {
-        // Expected shape (approx):
-        // { id: "resp_...", status: "requires_action", required_action: { type: "submit_tool_outputs", tool_calls: [ { id, function: { name, arguments } } ] } }
+        // Expected shapes (approx):
+        // Old: { required_action: { tool_calls: [ { id, function: { name, arguments } } ] } }
+        // New: { required_action: { tool_calls: [ { id, name, arguments } ] } }
         guard let responseId = response["id"] as? String else { return nil }
         guard let required = response["required_action"] as? [String: Any] else { return nil }
         guard let toolCalls = required["tool_calls"] as? [[String: Any]] ?? (required["submit_tool_outputs"] as? [String: Any])?["tool_calls"] as? [[String: Any]] else {
@@ -105,6 +106,17 @@ struct OpenAIClient {
         }
         let calls: [ToolCall] = toolCalls.compactMap { c in
             guard let id = c["id"] as? String else { return nil }
+            // New shape: name/arguments at top level
+            if let name = c["name"] as? String {
+                if let a = c["arguments"] as? String {
+                    return ToolCall(id: id, name: name, argumentsJSON: a)
+                } else if let aObj = c["arguments"] as? [String: Any],
+                          let data = try? JSONSerialization.data(withJSONObject: aObj),
+                          let a = String(data: data, encoding: .utf8) {
+                    return ToolCall(id: id, name: name, argumentsJSON: a)
+                }
+            }
+            // Old shape: nested under "function"
             if let function = c["function"] as? [String: Any],
                let name = function["name"] as? String,
                let args = function["arguments"] as? String {

@@ -109,6 +109,17 @@ struct OpenAIStreamClient {
                                     if !toolCalls.isEmpty {
                                         let tuples: [(String, String, String)] = toolCalls.compactMap { c in
                                             guard let id = c["id"] as? String else { return nil }
+                                            // New Responses shape: name/arguments at top level
+                                            if let name = c["name"] as? String {
+                                                if let a = c["arguments"] as? String {
+                                                    return (id, name, a)
+                                                } else if let aObj = c["arguments"] as? [String: Any],
+                                                          let data = try? JSONSerialization.data(withJSONObject: aObj),
+                                                          let a = String(data: data, encoding: .utf8) {
+                                                    return (id, name, a)
+                                                }
+                                            }
+                                            // Legacy shape: nested function object
                                             if let fn = c["function"] as? [String: Any],
                                                let name = fn["name"] as? String,
                                                let args = fn["arguments"] as? String {
