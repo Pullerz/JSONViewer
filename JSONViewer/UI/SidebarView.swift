@@ -4,9 +4,6 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var lastRowCount: Int = 0
     @State private var isAtBottom: Bool = false
-    // Local search text so typing doesn't publish through AppViewModel each keystroke
-    @State private var sidebarSearchLocal: String = ""
-    @State private var sidebarSearchCommitDebounce: Task<Void, Never>? = nil
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -51,7 +48,7 @@ struct SidebarView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
-                    TextField("Search", text: $sidebarSearchLocal)
+                    TextField("Search", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
                 }
                 .padding(.vertical, 8)
@@ -178,29 +175,22 @@ struct SidebarView: View {
         }
         .onAppear {
             lastRowCount = viewModel.jsonlRowCount
-            sidebarSearchLocal = viewModel.searchText
         }
-        .onChange(of: sidebarSearchLocal) { newVal in
-            // Debounce committing to the shared model to avoid global re-renders per keystroke
-            sidebarSearchCommitDebounce?.cancel()
-            sidebarSearchCommitDebounce = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                viewModel.searchText = newVal
-            }
-        }
-        .onChange(of: viewModel.searchText) { _ in
-            if sidebarSearchLocal != viewModel.searchText {
-                sidebarSearchLocal = viewModel.searchText
-            }
+        .onChange(of: viewModel.searchText) { newVal in
             if viewModel.jsonlIndex != nil {
-                viewModel.runSidebarSearchDebounced()
+                if newVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.sidebarFilteredRowIDs = nil
+                } else {
+                    viewModel.runSidebarSearchDebounced()
+                }
             } else {
                 viewModel.sidebarFilteredRowIDs = nil
             }
         }
         .onChange(of: viewModel.jsonlRowCount) { _ in
             if viewModel.jsonlIndex != nil && !viewModel.searchText.isEmpty {
-                viewModel.runSidebarSearch()
+                // Re-run search when new rows arrive, but debounce to avoid thrashing during indexing
+                viewModel.runSidebarSearchDebounced()
             }
         }
         .onChange(of: viewModel.selectedRowID) { _ in
