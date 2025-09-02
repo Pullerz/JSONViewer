@@ -72,13 +72,15 @@ struct OpenAIClient {
     }
 
     static func submitToolOutputs(apiKey: String, responseId: String, toolOutputs: [ToolOutput]) async throws -> [String: Any] {
-        let url = URL(string: "https://api.openai.com/v1/responses/\(responseId)/submit_tool_outputs")!
+        // Per Responses API, submit tool outputs by POSTing to /v1/responses with the response_id
+        let url = URL(string: "https://api.openai.com/v1/responses")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
+            "response_id": responseId,
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] }
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
