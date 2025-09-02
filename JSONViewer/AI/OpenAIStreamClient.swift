@@ -34,8 +34,7 @@ struct OpenAIStreamClient {
                 ["role": "user", "content": userText]
             ],
             "tools": tools,
-            "stream": true,
-            "temperature": 0.2
+            "stream": true
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
