@@ -8,9 +8,19 @@ final class JSONLIndex {
     private let chunkSize = 8 * 1024 * 1024
     private let newline: UInt8 = 0x0A
     private let scanQueue = DispatchQueue(label: "com.prism.jsonlindex.scan", qos: .utility)
+    private let scanQueueKey = DispatchSpecificKey<Void>()
 
     init(url: URL) {
         self.url = url
+        scanQueue.setSpecific(key: scanQueueKey, value: ())
+    }
+
+    private func syncOnScanQueue<T>(_ block: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: scanQueueKey) != nil {
+            return try block()
+        } else {
+            return try scanQueue.sync(execute: block)
+        }
     }
 
     // Build index progressively, reporting progress and current lineCount after each chunk.
@@ -61,11 +71,11 @@ final class JSONLIndex {
     }
 
     var lineCount: Int {
-        scanQueue.sync { max(0, offsets.count - 1) }
+        syncOnScanQueue { max(0, offsets.count - 1) }
     }
 
     func sliceRange(forLine index: Int) -> Range<UInt64>? {
-        return scanQueue.sync {
+        return syncOnScanQueue {
             guard index >= 0 && index + 1 < offsets.count else { return nil }
             let start = offsets[index]
             let end = offsets[index + 1]
