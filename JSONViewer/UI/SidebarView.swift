@@ -4,12 +4,42 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var previews: [Int: String] = [:]
     @State private var lastRowCount: Int = 0
+    @State private var isAtBottom: Bool = false
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
         return viewModel.jsonlRows.filter { row in
             row.preview.localizedCaseInsensitiveContains(viewModel.searchText) || row.raw.localizedCaseInsensitiveContains(viewModel.searchText)
         }
+    }
+
+    private func relativeUpdatedString() -> String? {
+        guard let date = viewModel.lastUpdatedAt else { return nil }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+
+    @ViewBuilder
+    private func footerPill() -> some View {
+        let count = (viewModel.jsonlIndex != nil) ? viewModel.jsonlRowCount : viewModel.jsonlRows.count
+        HStack(spacing: 6) {
+            Text("\(count) rows")
+            if let rel = relativeUpdatedString() {
+                Text("· updated \(rel)")
+            }
+        }
+        .font(.caption)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(
+            Capsule().fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            Capsule().strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     var body: some View {
@@ -66,6 +96,12 @@ struct SidebarView: View {
                                     }
                                     .padding(.vertical, 4)
                                     .contentShape(Rectangle())
+                                    .onAppear {
+                                        if let last = ids.last, i == last { isAtBottom = true }
+                                    }
+                                    .onDisappear {
+                                        if let last = ids.last, i == last { isAtBottom = false }
+                                    }
                                 }
                             }
                             .onChange(of: viewModel.jsonlRowCount) { newCount in
@@ -84,10 +120,14 @@ struct SidebarView: View {
                             }
                         }
                         .overlay(alignment: .bottom) {
-                            if let progress = viewModel.indexingProgress, progress < 1.0 {
-                                ProgressView(value: progress)
-                                    .padding(.horizontal)
-                                    .padding(.bottom, 6)
+                            VStack(spacing: 6) {
+                                if let progress = viewModel.indexingProgress, progress < 1.0 {
+                                    ProgressView(value: progress)
+                                        .padding(.horizontal)
+                                }
+                                if !isAtBottom && (viewModel.jsonlRowCount > 0 || !viewModel.jsonlRows.isEmpty) {
+                                    footerPill()
+                                }
                             }
                         }
                     } else {
@@ -104,8 +144,15 @@ struct SidebarView: View {
                                 }
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())
+                                .onAppear {
+                                    if let last = filteredRows.last?.id, row.id == last { isAtBottom = true }
+                                }
+                                .onDisappear {
+                                    if let last = filteredRows.last?.id, row.id == last { isAtBottom = false }
+                                }
                             }
                         }
+                        .overlay(alignment: .bottom) { if !isAtBottom && !filteredRows.isEmpty { footerPill() } }
                     }
                 case .json:
                     VStack(spacing: 6) {
