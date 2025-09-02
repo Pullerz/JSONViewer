@@ -634,6 +634,79 @@ final class AppViewModel: ObservableObject {
         return formatter.string(fromByteCount: Int64(bytes))
     }
 
+    // MARK: - Preview fields management
+
+    func setSidebarPreviewFields(_ fields: [String]) {
+        let joined = fields.joined(separator: ",")
+        UserDefaults.standard.set(joined, forKey: "sidebarPreviewFields")
+        let prefKey = joined.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if prefKey != lastPreviewFieldsKey {
+            lastPreviewFieldsKey = prefKey
+            previewCache.removeAllObjects()
+            previewFieldsChangeToken &+= 1
+        }
+    }
+
+    func currentSidebarPreviewFields() -> [String] {
+        let raw = UserDefaults.standard.string(forKey: "sidebarPreviewFields") ?? ""
+        return raw
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    func collectCandidatePreviewPaths(limitLines: Int = 200, maxDepth: Int = 4) async -> [String] {
+        var paths = Set<String>()
+
+        func addPaths(from any: Any, base: String, depth: Int) {
+            if depth > maxDepth { return }
+            if let dict = any as? [String: Any] {
+                for (k, v) in dict {
+                    let path = base.isEmpty ? k : "\(base).\(k)"
+                    paths.insert(path)
+                    addPaths(from: v, base: path, depth: depth + 1)
+                }
+            } else if let arr = any as? [Any], let first = arr.first {
+                // Sample first element of the array
+                let idxPath = base.isEmpty ? "0" : "\(base).0"
+                addPaths(from: first, base: idxPath, depth: depth + 1)
+            }
+        }
+
+        if mode == .jsonl {
+            if let index = jsonlIndex {
+                let total = index.lineCount
+                let count = min(limitLines, total)
+                for i in 0..<count {
+                    if let line = try? index.readLine(at: i, maxBytes: 8192), let data = line.data(using: .utf8) {
+                        if let obj = try? JSONSerialization.jsonObject(with: data) {
+                            addPaths(from: obj, base: "", depth: 0)
+                            if paths.count > 400 { break }
+                        }
+                    }
+                }
+            } else {
+                // Pasted JSONL
+                for row in jsonlRows.prefix(limitLines) {
+                    if let data = row.raw.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data) {
+                        addPaths(from: obj, base: "", depth: 0)
+                        if paths.count > 400 { break }
+                    }
+                }
+            }
+        } else if mode == .json, let root = currentTreeRoot {
+            // If a plain JSON doc is open, propose paths from the tree to allow preconfiguration
+            func collectFromTree(_ node: JSONTreeNode) {
+                paths.insert(node.path)
+                node.children?.forEach(collectFromTree)
+            }
+            collectFromTree(root)
+        }
+
+        let sorted = paths.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return Array(sorted.prefix(500))
+    }
+
     // MARK: - Command Bar Actions
 
     func runJQ(filter: String) {

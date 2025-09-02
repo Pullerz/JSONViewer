@@ -11,6 +11,7 @@ struct AppShellView: View {
     #endif
     @State private var isInspectorVisible: Bool = false
     @State private var isAISidebarVisible: Bool = false
+    @State private var isPreviewPickerPresented: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     private var displayText: String {
@@ -79,7 +80,10 @@ struct AppShellView: View {
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
             .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
         }
-        
+        .sheet(isPresented: $isPreviewPickerPresented) {
+            PreviewFieldsPickerView(viewModel: viewModel, isPresented: $isPreviewPickerPresented)
+                .frame(minWidth: 520, minHeight: 520)
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -103,6 +107,15 @@ struct AppShellView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 100)
                 .help("Toggle between raw text and tree")
+
+                // New: Row preview fields picker
+                Button {
+                    isPreviewPickerPresented = true
+                } label: {
+                    Label("Row Preview", systemImage: "slider.horizontal.3")
+                }
+                .help("Choose which fields are shown in the JSONL sidebar preview")
+                .disabled(viewModel.mode == .none)
 
                 Button {
                     withAnimation {
