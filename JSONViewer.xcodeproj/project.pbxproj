@@ -407,11 +407,13 @@
 						CFBundleTypeName = "JSON Document";
 						CFBundleTypeRole = Viewer;
 						LSItemContentTypes = ( "public.json" );
+						CFBundleTypeExtensions = ( "json" );
 					},
 					{
 						CFBundleTypeName = "JSON Lines Document";
 						CFBundleTypeRole = Viewer;
 						LSItemContentTypes = ( "org.jsonlines.jsonl" );
+						CFBundleTypeExtensions = ( "jsonl", "ndjson" );
 					},
 				);
 				INFOPLIST_KEY_UTImportedTypeDeclarations = (
@@ -419,7 +421,7 @@
 						UTTypeIdentifier = "org.jsonlines.jsonl";
 						UTTypeDescription = "JSON Lines Document";
 						UTTypeConformsTo = ( "public.plain-text" );
-						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl" ); "public.mime-type" = "application/x-ndjson"; };
+						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl", "ndjson" ); "public.mime-type" = ( "application/x-ndjson", "application/ndjson" ); };
 					},
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -455,11 +457,13 @@
 						CFBundleTypeName = "JSON Document";
 						CFBundleTypeRole = Viewer;
 						LSItemContentTypes = ( "public.json" );
+						CFBundleTypeExtensions = ( "json" );
 					},
 					{
 						CFBundleTypeName = "JSON Lines Document";
 						CFBundleTypeRole = Viewer;
 						LSItemContentTypes = ( "org.jsonlines.jsonl" );
+						CFBundleTypeExtensions = ( "jsonl", "ndjson" );
 					},
 				);
 				INFOPLIST_KEY_UTImportedTypeDeclarations = (
@@ -467,7 +471,7 @@
 						UTTypeIdentifier = "org.jsonlines.jsonl";
 						UTTypeDescription = "JSON Lines Document";
 						UTTypeConformsTo = ( "public.plain-text" );
-						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl" ); "public.mime-type" = "application/x-ndjson"; };
+						UTTypeTagSpecification = { "public.filename-extension" = ( "jsonl", "ndjson" ); "public.mime-type" = ( "application/x-ndjson", "application/ndjson" ); };
 					},
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
