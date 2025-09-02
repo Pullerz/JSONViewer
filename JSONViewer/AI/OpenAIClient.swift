@@ -82,7 +82,9 @@ struct OpenAIClient {
         let payload: [String: Any] = [
             "model": model,
             "response_id": responseId,
-            "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] }
+            "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
+            // Responses API requires the 'input' param even when only submitting tool outputs.
+            "input": []
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 

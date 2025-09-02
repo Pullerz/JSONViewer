@@ -59,6 +59,8 @@ struct OpenAIStreamClient {
             "model": model,
             "response_id": responseId,
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
+            // Responses API requires input; use an empty input to indicate continuation with tool outputs only.
+            "input": [],
             "stream": true
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
