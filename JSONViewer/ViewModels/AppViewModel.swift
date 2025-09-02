@@ -624,6 +624,10 @@ final class AppViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let apiKey = OpenAIClient.loadAPIKeyFromDefaultsOrEnv() else {
             statusMessage = "Missing OpenAI API key (set in Preferences > AI or OPENAI_API_KEY env var)."
+            // Surface this in the AI sidebar so it's obvious why nothing streamed.
+            aiMessages.append(AIMessage(role: "assistant", text: "Missing OpenAI API key. Open Preferences → AI and paste your key, or set the OPENAI_API_KEY environment variable in your run scheme."))
+            aiIsStreaming = false
+            aiStreamingText = nil
             return
         }
 
@@ -652,10 +656,21 @@ final class AppViewModel: ObservableObject {
                         case .requiresAction(let responseId, let calls):
                             // Execute tools locally, then stream the continuation
                             self.statusMessage = "AI using tools…"
+                            #if DEBUG
+                            print("[AI] requiresAction: responseId=\(responseId), calls=\(calls.map { $0.name })")
+                            #endif
                             Task.detached(priority: .userInitiated) { [weak self] in
                                 guard let self else { return }
                                 var outputs: [OpenAIClient.ToolOutput] = []
                                 for call in calls {
+                                    #if DEBUG
+                                    print("[AI] running tool:", call.name)
+                                    if call.argumentsJSON.count < 300 {
+                                        print("[AI] tool args:", call.argumentsJSON)
+                                    } else {
+                                        print("[AI] tool args (trunc):", String(call.argumentsJSON.prefix(300)) + "…")
+                                    }
+                                    #endif
                                     if call.name == "run_jq" {
                                         if let json = call.argumentsJSON.data(using: .utf8),
                                            let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
@@ -665,6 +680,9 @@ final class AppViewModel: ObservableObject {
                                                 let result = try JQRunner.run(filter: filter, input: data, kind: kind)
                                                 let output = result.stdout
                                                 outputs.append(.init(toolCallId: call.id, output: output))
+                                                #if DEBUG
+                                                print("[AI] jq stdout len:", output.count)
+                                                #endif
                                                 let outData = output.data(using: .utf8) ?? Data()
                                                 let tree = try? JSONTreeBuilder.build(from: outData)
                                                 let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
@@ -675,7 +693,14 @@ final class AppViewModel: ObservableObject {
                                                 }
                                             } catch {
                                                 outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                                #if DEBUG
+                                                print("[AI] jq error:", error.localizedDescription)
+                                                #endif
                                             }
+                                        } else {
+                                            #if DEBUG
+                                            print("[AI] run_jq missing/invalid filter argument")
+                                            #endif
                                         }
                                     } else if call.name == "run_python" {
                                         if let json = call.argumentsJSON.data(using: .utf8),
@@ -691,13 +716,36 @@ final class AppViewModel: ObservableObject {
                                                 ]
                                                 let outputJSON = String(data: try JSONSerialization.data(withJSONObject: desc), encoding: .utf8) ?? "{}"
                                                 outputs.append(.init(toolCallId: call.id, output: outputJSON))
+                                                #if DEBUG
+                                                print("[AI] python stdout len:", result.stdout.count, "stderr len:", result.stderr.count, "files:", result.outputFiles.count)
+                                                #endif
                                             } catch {
                                                 outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                                #if DEBUG
+                                                print("[AI] python error:", error.localizedDescription)
+                                                #endif
                                             }
+                                        } else {
+                                            #if DEBUG
+                                            print("[AI] run_python missing/invalid code argument")
+                                            #endif
                                         }
+                                    } else {
+                                        #if DEBUG
+                                        print("[AI] unknown tool:", call.name)
+                                        #endif
                                     }
                                 }
                                 do {
+                                    // Start second stream (continuation) visibly
+                                    await MainActor.run {
+                                        self.aiIsStreaming = true
+                                        if self.aiStreamingText == nil { self.aiStreamingText = "" }
+                                        self.aiStatus = "Using tools…"
+                                    }
+                                    #if DEBUG
+                                    print("[AI] submitting tool outputs count:", outputs.count, "responseId:", responseId)
+                                    #endif
                                     try await OpenAIStreamClient.streamSubmitToolOutputs(
                                         apiKey: apiKey,
                                         responseId: responseId,
@@ -706,8 +754,14 @@ final class AppViewModel: ObservableObject {
                                         Task { @MainActor in
                                             switch evt {
                                             case .textDelta(let txt):
+                                                #if DEBUG
+                                                print("[AI] submit stream textDelta len:", txt.count)
+                                                #endif
                                                 self.aiStreamingText = (self.aiStreamingText ?? "") + txt
                                             case .completed:
+                                                #if DEBUG
+                                                print("[AI] submit stream completed")
+                                                #endif
                                                 if let text = self.aiStreamingText, !text.isEmpty {
                                                     self.aiMessages.append(AIMessage(role: "assistant", text: text))
                                                 }
@@ -718,17 +772,24 @@ final class AppViewModel: ObservableObject {
                                             case .requiresAction:
                                                 // Nested tool calls not handled in this first version.
                                                 self.statusMessage = "AI requested nested tools; unsupported in this version."
+                                                #if DEBUG
+                                                print("[AI] nested requiresAction received (not handled)")
+                                                #endif
                                             }
                                         }
                                     }
                                 } catch {
                                     await MainActor.run {
                                         self.statusMessage = "AI tool submit error: \(error.localizedDescription)"
+                                        self.aiMessages.append(AIMessage(role: "assistant", text: "AI tool submit error: \(error.localizedDescription)"))
                                         self.aiIsStreaming = false
                                         self.aiStreamingText = nil
                                         self.isLoading = false
                                         self.aiStatus = ""
                                     }
+                                    #if DEBUG
+                                    print("[AI] submit error:", error.localizedDescription)
+                                    #endif
                                 }
                             }
                         case .completed:
@@ -745,6 +806,7 @@ final class AppViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.statusMessage = "AI error: \(error.localizedDescription)"
+                    self.aiMessages.append(AIMessage(role: "assistant", text: "AI error: \(error.localizedDescription)"))
                     self.aiIsStreaming = false
                     self.aiStreamingText = nil
                     self.isLoading = false
@@ -782,32 +844,29 @@ final class AppViewModel: ObservableObject {
     }
 
     private static func toolSchemas() -> [[String: Any]] {
+        // Responses API expects top-level "name" for tools. Keep JSON Schema under "parameters".
         let runJQ: [String: Any] = [
             "type": "function",
-            "function": [
-                "name": "run_jq",
-                "description": "Run a jq filter on the current document (JSON or slurped JSONL). Returns jq output text.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "filter": ["type": "string", "description": "jq filter, e.g. .items | length"]
-                    ],
-                    "required": ["filter"]
-                ]
+            "name": "run_jq",
+            "description": "Run a jq filter on the current document (JSON or slurped JSONL). Returns jq output text.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "filter": ["type": "string", "description": "jq filter, e.g. .items | length"]
+                ],
+                "required": ["filter"]
             ]
         ]
         let runPy: [String: Any] = [
             "type": "function",
-            "function": [
-                "name": "run_python",
-                "description": "Execute Python 3 code on a temp copy of the current document. Read argv[1]; write optional outputs to argv[2]; print results to stdout.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "code": ["type": "string", "description": "Python 3 script source code"]
-                    ],
-                    "required": ["code"]
-                ]
+            "name": "run_python",
+            "description": "Execute Python 3 code on a temp copy of the current document. Read argv[1]; write optional outputs to argv[2]; print results to stdout.",
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "code": ["type": "string", "description": "Python 3 script source code"]
+                ],
+                "required": ["code"]
             ]
         ]
         return [runJQ, runPy]

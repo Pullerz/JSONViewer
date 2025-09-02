@@ -15,9 +15,8 @@ struct AISidebarView: View {
                                 .id(msg.id)
                         }
                         if let streaming = viewModel.aiStreamingText, !streaming.isEmpty {
+                            // Show live streaming text
                             messageBubble(.init(role: "assistant", text: streaming))
-                                .redacted(reason: .placeholder) // keep layout consistent while streaming
-                                .opacity(0)
                         }
                     }
                     .padding(12)
@@ -31,9 +30,26 @@ struct AISidebarView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 8) {
             Label("AI", systemImage: "brain.head.profile")
                 .font(.system(size: 13, weight: .semibold))
+
+            // Show concise AI status or AI-specific statusMessage (e.g. "AI error: ...")
+            Group {
+                let banner: String? = {
+                    if !viewModel.aiStatus.isEmpty { return viewModel.aiStatus }
+                    if let m = viewModel.statusMessage, m.hasPrefix("AI") { return m }
+                    return nil
+                }()
+                if let b = banner {
+                    Text(b)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+
             Spacer()
             if viewModel.aiIsStreaming {
                 ProgressView()
