@@ -678,8 +678,9 @@ final class AppViewModel: ObservableObject {
             let tools = await Self.toolSchemas()
 
             do {
+                let model = "gpt-5"
                 try await OpenAIStreamClient.streamCreateResponse(
-                    config: .init(apiKey: apiKey, model: "gpt-5", systemPrompt: systemPrompt),
+                    config: .init(apiKey: apiKey, model: model, systemPrompt: systemPrompt),
                     userText: trimmed,
                     tools: tools
                 ) { event in
@@ -717,14 +718,8 @@ final class AppViewModel: ObservableObject {
                                                 #if DEBUG
                                                 print("[AI] jq stdout len:", output.count)
                                                 #endif
-                                                let outData = output.data(using: .utf8) ?? Data()
-                                                let tree = try? JSONTreeBuilder.build(from: outData)
-                                                let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
-                                                await MainActor.run {
-                                                    self.prettyJSON = pretty
-                                                    self.currentTreeRoot = tree
-                                                    self.presentation = tree == nil ? .text : .tree
-                                                }
+                                                // Do not alter the main document view from AI tool runs.
+                                                // The tool output will be summarized back in the chat by the model.
                                             } catch {
                                                 outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
                                                 #if DEBUG
@@ -782,6 +777,7 @@ final class AppViewModel: ObservableObject {
                                     #endif
                                     try await OpenAIStreamClient.streamSubmitToolOutputs(
                                         apiKey: apiKey,
+                                        model: model,
                                         responseId: responseId,
                                         toolOutputs: outputs
                                     ) { evt in

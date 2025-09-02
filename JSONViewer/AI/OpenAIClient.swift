@@ -71,15 +71,20 @@ struct OpenAIClient {
         return obj ?? [:]
     }
 
-    static func submitToolOutputs(apiKey: String, responseId: String, toolOutputs: [ToolOutput]) async throws -> [String: Any] {
-        let url = URL(string: "https://api.openai.com/v1/responses/\(responseId)/submit_tool_outputs")!
+    static func submitToolOutputs(apiKey: String, model: String, responseId: String, toolOutputs: [ToolOutput]) async throws -> [String: Any] {
+        // Submit tool outputs by POSTing to /v1/responses with previous_response_id and model
+        let url = URL(string: "https://api.openai.com/v1/responses")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let payload: [String: Any] = [
-            "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] }
+            "model": model,
+            "previous_response_id": responseId,
+            "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
+            // Responses API requires the 'input' param even when only submitting tool outputs.
+            "input": []
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 

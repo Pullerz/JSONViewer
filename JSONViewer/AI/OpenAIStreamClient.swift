@@ -41,21 +41,26 @@ struct OpenAIStreamClient {
         try await streamSSE(request: req, onEvent: onEvent)
     }
 
-    // Stream a submit_tool_outputs continuation
+    // Stream a continuation by submitting tool outputs via Responses create with response_id
     static func streamSubmitToolOutputs(
         apiKey: String,
+        model: String,
         responseId: String,
         toolOutputs: [OpenAIClient.ToolOutput],
         onEvent: @escaping (SSEEvent) -> Void
     ) async throws {
-        let url = URL(string: "https://api.openai.com/v1/responses/\(responseId)/submit_tool_outputs")!
+        let url = URL(string: "https://api.openai.com/v1/responses")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let payload: [String: Any] = [
+            "model": model,
+            "previous_response_id": responseId,
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
+            // Responses API requires input; use an empty input to indicate continuation with tool outputs only.
+            "input": [],
             "stream": true
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
