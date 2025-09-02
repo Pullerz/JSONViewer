@@ -84,7 +84,7 @@ struct SidebarView: View {
                                             .lineLimit(2)
                                     }
                                     .id(i)
-                                    .task(id: i) {
+                                    .task(id: "\(i)-\(viewModel.previewFieldsChangeToken)") {
                                         if previews[i] == nil {
                                             viewModel.preview(for: i) { text in
                                                 // Ensure update happens next runloop to avoid update-during-view warnings
@@ -138,9 +138,19 @@ struct SidebarView: View {
                                     Text("Row \(row.id)")
                                         .font(.callout)
                                         .foregroundStyle(.secondary)
-                                    Text(row.preview)
+                                    Text(previews[row.id] ?? "Loading…")
                                         .font(.system(.caption, design: .monospaced))
                                         .lineLimit(2)
+                                }
+                                .id(row.id)
+                                .task(id: "\(row.id)-\(viewModel.previewFieldsChangeToken)") {
+                                    if previews[row.id] == nil {
+                                        viewModel.preview(for: row.id) { text in
+                                            DispatchQueue.main.async {
+                                                previews[row.id] = text
+                                            }
+                                        }
+                                    }
                                 }
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())
@@ -196,6 +206,10 @@ struct SidebarView: View {
         }
         .onChange(of: viewModel.selectedRowID) { _ in
             Task { _ = await viewModel.updateTreeForSelectedRow() }
+        }
+        .onChange(of: viewModel.previewFieldsChangeToken) { _ in
+            // Clear local previews so visible rows re-fetch with new field selection
+            previews = [:]
         }
     }
 }

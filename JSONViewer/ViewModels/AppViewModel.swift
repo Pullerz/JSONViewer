@@ -77,6 +77,10 @@ final class AppViewModel: ObservableObject {
     @Published var sidebarFilteredRowIDs: [Int]? = nil
     private var sidebarSearchTask: Task<Void, Never>?
 
+    // Row preview fields preference change token (used by views to refresh preview tasks)
+    @Published var previewFieldsChangeToken: Int = 0
+    private var lastPreviewFieldsKey: String = ""
+
     // Work management
     private var currentComputeTask: Task<Void, Never>?
     private var fileWatcher: FileWatcher?
@@ -109,6 +113,8 @@ final class AppViewModel: ObservableObject {
         searchText = ""
         indexingProgress = nil
         previewCache.removeAllObjects()
+        lastPreviewFieldsKey = ""
+        previewFieldsChangeToken = 0
         currentComputeTask?.cancel()
         currentComputeTask = nil
         fileChangeDebounce?.cancel()
@@ -263,29 +269,113 @@ final class AppViewModel: ObservableObject {
     // MARK: - JSONL utility
 
     func preview(for row: Int, completion: @escaping (String) -> Void) {
+        // Resolve user preference for preview fields (comma-separated, optional dot-paths)
+        let prefRaw = (UserDefaults.standard.string(forKey: "sidebarPreviewFields") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefKey = prefRaw.lowercased()
+
+        // Invalidate cache when preference changes
+        if prefKey != lastPreviewFieldsKey {
+            lastPreviewFieldsKey = prefKey
+            previewCache.removeAllObjects()
+            previewFieldsChangeToken &+= 1
+        }
+
         if let cached = previewCache.object(forKey: NSNumber(value: row)) {
             completion(cached as String)
             return
         }
 
+        let fields: [String] = prefRaw
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        // Pasted JSONL (no index)
         guard let index = jsonlIndex else {
-            // Fallback to pasted rows array
             if let item = jsonlRows.first(where: { $0.id == row }) {
-                completion(item.preview)
+                if fields.isEmpty {
+                    // Default behavior
+                    let preview = item.preview
+                    previewCache.setObject(preview as NSString, forKey: NSNumber(value: row))
+                    completion(preview)
+                } else {
+                    DispatchQueue.global(qos: .utility).async {
+                        let computed = Self.computePreview(fromRaw: item.raw, fields: fields)
+                        let result = computed ?? String(item.raw.prefix(160))
+                        self.previewCache.setObject(result as NSString, forKey: NSNumber(value: row))
+                        DispatchQueue.main.async { completion(result) }
+                    }
+                }
             } else {
                 completion("")
             }
             return
         }
 
+        // File-backed JSONL
         DispatchQueue.global(qos: .utility).async {
-            let text = (try? index.readLine(at: row, maxBytes: 200)) ?? ""
-            let preview = String(text.prefix(160))
-            self.previewCache.setObject(preview as NSString, forKey: NSNumber(value: row))
-            DispatchQueue.main.async {
-                completion(preview)
+            if fields.isEmpty {
+                let text = (try? index.readLine(at: row, maxBytes: 200)) ?? ""
+                let preview = String(text.prefix(160))
+                self.previewCache.setObject(preview as NSString, forKey: NSNumber(value: row))
+                DispatchQueue.main.async { completion(preview) }
+            } else {
+                let raw = (try? index.readLine(at: row, maxBytes: nil)) ?? ""
+                let computed = Self.computePreview(fromRaw: raw, fields: fields)
+                let result = computed ?? String(raw.prefix(160))
+                self.previewCache.setObject(result as NSString, forKey: NSNumber(value: row))
+                DispatchQueue.main.async { completion(result) }
             }
         }
+    }
+
+    // Build a preview string from specific fields in a JSON object.
+    // - fields: comma-separated tokenized into an array; supports dot-paths and array indices.
+    private static func computePreview(fromRaw raw: String, fields: [String]) -> String? {
+        guard !fields.isEmpty, let data = raw.data(using: .utf8) else { return nil }
+        guard let obj = try? JSONSerialization.jsonObject(with: data, options: [] ) else { return nil }
+        var parts: [String] = []
+        for f in fields {
+            let path = f.split(separator: ".").map(String.init)
+            if let v = valueForKeyPath(path, in: obj), let s = stringForPreviewValue(v) {
+                parts.append(s)
+            }
+        }
+        if parts.isEmpty { return nil }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func valueForKeyPath(_ path: [String], in object: Any) -> Any? {
+        var current: Any? = object
+        for token in path {
+            guard let c = current else { return nil }
+            if let dict = c as? [String: Any] {
+                current = dict[token]
+            } else if let arr = c as? [Any], let idx = Int(token), idx >= 0, idx < arr.count {
+                current = arr[idx]
+            } else {
+                return nil
+            }
+        }
+        return current
+    }
+
+    private static func stringForPreviewValue(_ value: Any) -> String? {
+        if let s = value as? String { return s }
+        if let n = value as? NSNumber {
+            if CFGetTypeID(n) == CFBooleanGetTypeID() {
+                return n.boolValue ? "true" : "false"
+            }
+            return n.stringValue
+        }
+        if value is NSNull { return "null" }
+        if JSONSerialization.isValidJSONObject(value),
+           let d = try? JSONSerialization.data(withJSONObject: value, options: []),
+           let s = String(data: d, encoding: .utf8) {
+            return s
+        }
+        return nil
     }
 
     @discardableResult

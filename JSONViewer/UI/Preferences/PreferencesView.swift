@@ -23,6 +23,7 @@ struct PreferencesView: View {
 
 private struct AppearancePreferences: View {
     @AppStorage("themePreference") private var themePreference: String = "system"
+    @AppStorage("sidebarPreviewFields") private var sidebarPreviewFields: String = ""
 
     private struct ThemeOption: Identifiable {
         let id: String
@@ -53,6 +54,24 @@ private struct AppearancePreferences: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 340)
+            }
+
+            Divider().padding(.vertical, 4)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("Row preview")
+                        .frame(width: 80, alignment: .trailing)
+                        .foregroundStyle(.secondary)
+                    TextField("e.g. time,level,message or user.name,details.id", text: $sidebarPreviewFields)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 340)
+                        .help("Comma-separated keys (supports dot-paths and array indices). Leave empty to show default raw preview.")
+                }
+                Text("Choose which JSON fields to show in the sidebar row preview. Leave blank to use the default preview.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 500, alignment: .leading)
             }
 
             Spacer()
