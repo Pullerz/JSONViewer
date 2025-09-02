@@ -25,6 +25,7 @@ struct OpenAIStreamClient {
         req.httpMethod = "POST"
         req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
         let body: [String: Any] = [
             "model": config.model,
@@ -53,6 +54,7 @@ struct OpenAIStreamClient {
         req.httpMethod = "POST"
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         let payload: [String: Any] = [
             "tool_outputs": toolOutputs.map { ["tool_call_id": $0.toolCallId, "output": $0.output] },
             "stream": true
@@ -69,14 +71,13 @@ struct OpenAIStreamClient {
             throw OpenAIClient.ClientError.badResponse
         }
         if !(200..<300).contains(http.statusCode) {
-            // Try to fetch error body for better diagnostics
-            do {
-                let (data, _) = try await URLSession.shared.data(for: request)
-                let text = String(data: data, encoding: .utf8) ?? ""
-                throw OpenAIClient.ClientError.http(http.statusCode, text.isEmpty ? "Non-200 streaming response" : text)
-            } catch {
-                throw OpenAIClient.ClientError.http(http.statusCode, "Non-200 streaming response")
+            // Consume the error body from the same streaming response for full details.
+            var errData = Data()
+            for try await chunk in bytes {
+                errData.append(chunk)
             }
+            let text = String(data: errData, encoding: .utf8) ?? "Non-200 streaming response"
+            throw OpenAIClient.ClientError.http(http.statusCode, text)
         }
 
         var buffer = Data()
