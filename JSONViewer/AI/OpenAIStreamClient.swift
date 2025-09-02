@@ -136,7 +136,47 @@ struct OpenAIStreamClient {
                                         onEvent(.textDelta(txt)); continue
                                     }
                                     if t == "response.message.delta" {
-                                        if let txt = obj["delta"] as? String { onEvent(.textDelta(txt)); continue }
+                                        // delta may be an object with content array items containing text
+                                        if let delta = obj["delta"] as? [String: Any] {
+                                            if let txt = delta["output_text"] as? String, !txt.isEmpty {
+                                                onEvent(.textDelta(txt)); continue
+                                            }
+                                            if let content = delta["content"] as? [[String: Any]] {
+                                                var emitted = false
+                                                for item in content {
+                                                    if let itemType = item["type"] as? String,
+                                                       (itemType == "output_text" || itemType == "text"),
+                                                       let txt = item["text"] as? String, !txt.isEmpty {
+                                                        onEvent(.textDelta(txt))
+                                                        emitted = true
+                                                    }
+                                                }
+                                                if emitted { continue }
+                                            }
+                                        }
+                                    }
+                                    if t == "response.output_item.delta" {
+                                        // Some models stream text via output_item.delta
+                                        if let delta = obj["delta"] as? [String: Any] {
+                                            if let txt = delta["output_text"] as? String, !txt.isEmpty {
+                                                onEvent(.textDelta(txt)); continue
+                                            }
+                                            if let txt = delta["text"] as? String, !txt.isEmpty {
+                                                onEvent(.textDelta(txt)); continue
+                                            }
+                                            if let content = delta["content"] as? [[String: Any]] {
+                                                var emitted = false
+                                                for item in content {
+                                                    if let itemType = item["type"] as? String,
+                                                       (itemType == "output_text" || itemType == "text"),
+                                                       let txt = item["text"] as? String, !txt.isEmpty {
+                                                        onEvent(.textDelta(txt))
+                                                        emitted = true
+                                                    }
+                                                }
+                                                if emitted { continue }
+                                            }
+                                        }
                                     }
 
                                     // Function call lifecycle

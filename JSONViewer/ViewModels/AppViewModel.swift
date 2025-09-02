@@ -656,10 +656,21 @@ final class AppViewModel: ObservableObject {
                         case .requiresAction(let responseId, let calls):
                             // Execute tools locally, then stream the continuation
                             self.statusMessage = "AI using tools…"
+                            #if DEBUG
+                            print("[AI] requiresAction: responseId=\(responseId), calls=\(calls.map { $0.name })")
+                            #endif
                             Task.detached(priority: .userInitiated) { [weak self] in
                                 guard let self else { return }
                                 var outputs: [OpenAIClient.ToolOutput] = []
                                 for call in calls {
+                                    #if DEBUG
+                                    print("[AI] running tool:", call.name)
+                                    if call.argumentsJSON.count < 300 {
+                                        print("[AI] tool args:", call.argumentsJSON)
+                                    } else {
+                                        print("[AI] tool args (trunc):", String(call.argumentsJSON.prefix(300)) + "…")
+                                    }
+                                    #endif
                                     if call.name == "run_jq" {
                                         if let json = call.argumentsJSON.data(using: .utf8),
                                            let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
@@ -669,6 +680,9 @@ final class AppViewModel: ObservableObject {
                                                 let result = try JQRunner.run(filter: filter, input: data, kind: kind)
                                                 let output = result.stdout
                                                 outputs.append(.init(toolCallId: call.id, output: output))
+                                                #if DEBUG
+                                                print("[AI] jq stdout len:", output.count)
+                                                #endif
                                                 let outData = output.data(using: .utf8) ?? Data()
                                                 let tree = try? JSONTreeBuilder.build(from: outData)
                                                 let pretty = (try? JSONPrettyPrinter.pretty(data: outData)) ?? output
@@ -679,7 +693,14 @@ final class AppViewModel: ObservableObject {
                                                 }
                                             } catch {
                                                 outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                                #if DEBUG
+                                                print("[AI] jq error:", error.localizedDescription)
+                                                #endif
                                             }
+                                        } else {
+                                            #if DEBUG
+                                            print("[AI] run_jq missing/invalid filter argument")
+                                            #endif
                                         }
                                     } else if call.name == "run_python" {
                                         if let json = call.argumentsJSON.data(using: .utf8),
@@ -695,10 +716,24 @@ final class AppViewModel: ObservableObject {
                                                 ]
                                                 let outputJSON = String(data: try JSONSerialization.data(withJSONObject: desc), encoding: .utf8) ?? "{}"
                                                 outputs.append(.init(toolCallId: call.id, output: outputJSON))
+                                                #if DEBUG
+                                                print("[AI] python stdout len:", result.stdout.count, "stderr len:", result.stderr.count, "files:", result.outputFiles.count)
+                                                #endif
                                             } catch {
                                                 outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
+                                                #if DEBUG
+                                                print("[AI] python error:", error.localizedDescription)
+                                                #endif
                                             }
+                                        } else {
+                                            #if DEBUG
+                                            print("[AI] run_python missing/invalid code argument")
+                                            #endif
                                         }
+                                    } else {
+                                        #if DEBUG
+                                        print("[AI] unknown tool:", call.name)
+                                        #endif
                                     }
                                 }
                                 do {
@@ -708,6 +743,9 @@ final class AppViewModel: ObservableObject {
                                         if self.aiStreamingText == nil { self.aiStreamingText = "" }
                                         self.aiStatus = "Using tools…"
                                     }
+                                    #if DEBUG
+                                    print("[AI] submitting tool outputs count:", outputs.count, "responseId:", responseId)
+                                    #endif
                                     try await OpenAIStreamClient.streamSubmitToolOutputs(
                                         apiKey: apiKey,
                                         responseId: responseId,
@@ -716,8 +754,14 @@ final class AppViewModel: ObservableObject {
                                         Task { @MainActor in
                                             switch evt {
                                             case .textDelta(let txt):
+                                                #if DEBUG
+                                                print("[AI] submit stream textDelta len:", txt.count)
+                                                #endif
                                                 self.aiStreamingText = (self.aiStreamingText ?? "") + txt
                                             case .completed:
+                                                #if DEBUG
+                                                print("[AI] submit stream completed")
+                                                #endif
                                                 if let text = self.aiStreamingText, !text.isEmpty {
                                                     self.aiMessages.append(AIMessage(role: "assistant", text: text))
                                                 }
@@ -728,6 +772,9 @@ final class AppViewModel: ObservableObject {
                                             case .requiresAction:
                                                 // Nested tool calls not handled in this first version.
                                                 self.statusMessage = "AI requested nested tools; unsupported in this version."
+                                                #if DEBUG
+                                                print("[AI] nested requiresAction received (not handled)")
+                                                #endif
                                             }
                                         }
                                     }
@@ -740,6 +787,9 @@ final class AppViewModel: ObservableObject {
                                         self.isLoading = false
                                         self.aiStatus = ""
                                     }
+                                    #if DEBUG
+                                    print("[AI] submit error:", error.localizedDescription)
+                                    #endif
                                 }
                             }
                         case .completed:
