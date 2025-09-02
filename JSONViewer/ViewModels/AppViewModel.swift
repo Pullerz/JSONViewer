@@ -82,6 +82,7 @@ final class AppViewModel: ObservableObject {
     // Sidebar (JSONL) search
     @Published var sidebarFilteredRowIDs: [Int]? = nil
     private var sidebarSearchTask: Task<Void, Never>?
+    private var sidebarSearchDebounce: Task<Void, Never>? = nil
 
     // Work management
     private var currentComputeTask: Task<Void, Never>?
@@ -122,6 +123,10 @@ final class AppViewModel: ObservableObject {
         fileWatcher?.cancel()
         fileWatcher = nil
         lastUpdatedAt = nil
+        sidebarSearchTask?.cancel()
+        sidebarSearchTask = nil
+        sidebarSearchDebounce?.cancel()
+        sidebarSearchDebounce = nil
         #if os(macOS)
         securityScopedURL?.stopAccessingSecurityScopedResource()
         securityScopedURL = nil
@@ -494,6 +499,14 @@ final class AppViewModel: ObservableObject {
     }
 
     // MARK: - Sidebar filtering for file-backed JSONL
+
+    func runSidebarSearchDebounced() {
+        sidebarSearchDebounce?.cancel()
+        sidebarSearchDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            runSidebarSearch()
+        }
+    }
 
     func runSidebarSearch() {
         sidebarSearchTask?.cancel()

@@ -178,7 +178,7 @@ struct SidebarView: View {
         }
         .onChange(of: viewModel.searchText) { _ in
             if viewModel.jsonlIndex != nil {
-                viewModel.runSidebarSearch()
+                viewModel.runSidebarSearchDebounced()
             } else {
                 viewModel.sidebarFilteredRowIDs = nil
             }
