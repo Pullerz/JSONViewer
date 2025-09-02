@@ -14,6 +14,10 @@ struct JSONTreeView: View {
     @State private var lastExpanded: Set<String> = []
     @State private var queryDebounce: Task<Void, Never>? = nil
 
+    // Local find text to avoid publishing every keystroke through AppViewModel
+    @State private var treeQueryLocal: String = ""
+    @State private var queryCommitDebounce: Task<Void, Never>? = nil
+
     private struct RowItem: Identifiable, Hashable {
         let id: UUID = UUID()
         let node: JSONTreeNode
@@ -100,7 +104,7 @@ struct JSONTreeView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "magnifyingglass")
                                 .foregroundStyle(.secondary)
-                            TextField("Find in tree", text: $viewModel.treeSearchQuery)
+                            TextField("Find in tree", text: $treeQueryLocal)
                                 .textFieldStyle(.plain)
                                 .focused($findFocused)
                         }
@@ -177,19 +181,26 @@ struct JSONTreeView: View {
                 .onChange(of: viewModel.treeFindFocusToken) { _ in
                     findFocused = true
                 }
-                .onChange(of: viewModel.treeSearchQuery) { _ in
-                    // Debounce heavy search recomputation to keep typing fluid on large trees.
-                    queryDebounce?.cancel()
-                    queryDebounce = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 200_000_000)
-                        recomputeRows()
+                .onChange(of: viewModel.treeSearchQuery) { newVal in
+                    // Keep local field in sync with external changes and recompute immediately.
+                    if treeQueryLocal != newVal {
+                        treeQueryLocal = newVal
                     }
+                    recomputeRows()
                 }
                 .onChange(of: viewModel.expandedPaths) { _ in
                     recomputeRows()
                 }
                 .onChange(of: root?.id) { _ in
                     recomputeRows()
+                }
+                .onChange(of: treeQueryLocal) { newVal in
+                    // Debounce committing to the shared view model
+                    queryCommitDebounce?.cancel()
+                    queryCommitDebounce = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                        viewModel.treeSearchQuery = newVal
+                    }
                 }
                 .onAppear {
                     // Do not focus search by default
@@ -198,6 +209,8 @@ struct JSONTreeView: View {
                     if viewModel.expandedPaths.isEmpty {
                         viewModel.expandedPaths.insert("")
                     }
+                    // Sync local field from model and build rows
+                    treeQueryLocal = viewModel.treeSearchQuery
                     recomputeRows()
                 }
             } else {
