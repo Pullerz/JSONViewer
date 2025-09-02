@@ -51,55 +51,11 @@ final class JSONLIndex {
         onUpdate?(lineCount)
     }
 
-    // Refresh the index for file changes. If the file grew, append offsets from the previous size.
-    // If it shrank or was replaced, rebuild from scratch.
+    // Refresh the index for file changes. Always rebuild to avoid duplicating rows when files are rewritten.
     func refresh(progress: ((Double) -> Void)? = nil, onUpdate: ((Int) -> Void)? = nil) throws {
-        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        let newSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
-
-        if newSize > fileSize {
-            // Remove EOF sentinel to continue scanning
-            if offsets.last == fileSize { _ = offsets.popLast() }
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            var position = fileSize
-            while position < newSize {
-                try handle.seek(toOffset: position)
-                let remaining = Int(min(UInt64(chunkSize), newSize - position))
-                guard let chunk = try handle.read(upToCount: remaining), !chunk.isEmpty else { break }
-
-                chunk.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
-                    guard let base = ptr.bindMemory(to: UInt8.self).baseAddress else { return }
-                    for i in 0..<chunk.count {
-                        if base.advanced(by: i).pointee == newline {
-                            let nextOffset = position + UInt64(i) + 1
-                            offsets.append(nextOffset)
-                        }
-                    }
-                }
-
-                position += UInt64(chunk.count)
-                progress?(Double(position - fileSize) / Double(newSize - fileSize))
-                onUpdate?(lineCount)
-                if chunk.count < chunkSize { break }
-            }
-            fileSize = newSize
-            if offsets.last != fileSize {
-                offsets.append(fileSize)
-            }
-            progress?(1.0)
-            onUpdate?(lineCount)
-        } else if newSize != fileSize {
-            // Truncated or replaced - rebuild
-            offsets = [0]
-            fileSize = 0
-            try build(progress: progress, onUpdate: onUpdate)
-        } else {
-            // Size unchanged: possibly content modified in-place; safest to rebuild
-            offsets = [0]
-            fileSize = 0
-            try build(progress: progress, onUpdate: onUpdate)
-        }
+        offsets = [0]
+        fileSize = 0
+        try build(progress: progress, onUpdate: onUpdate)
     }
 
     var lineCount: Int {

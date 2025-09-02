@@ -428,6 +428,14 @@ final class AppViewModel: ObservableObject {
                         }
                     })
                     await MainActor.run {
+                        // Clear any stale previews because the entire file was re-indexed
+                        self?.previewCache.removeAllObjects()
+                        // Ensure selection is valid for the new row count
+                        if let count = self?.jsonlRowCount {
+                            if let sel = self?.selectedRowID, sel >= count {
+                                self?.selectedRowID = count > 0 ? 0 : nil
+                            }
+                        }
                         // Rebuild current row view if one is selected
                         Task { _ = await self?.updateTreeForSelectedRow() }
                         self?.lastUpdatedAt = Date()
