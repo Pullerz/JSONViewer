@@ -309,8 +309,15 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     func updateTreeForSelectedRow() async -> Bool {
+        // Forward to the explicit-id variant using the current selection.
+        return await updateTreeForSelectedRow(selectedID: selectedRowID)
+    }
+
+    // Explicit-id variant used by views to avoid any timing race on reading selectedRowID.
+    @discardableResult
+    func updateTreeForSelectedRow(selectedID: Int?) async -> Bool {
         // Only valid for JSONL mode with a concrete selection
-        guard mode == .jsonl, let id = selectedRowID else { return false }
+        guard mode == .jsonl, let id = selectedID else { return false }
 
         // Cancel any in-flight compute and start a fresh one for the current selection
         currentComputeTask?.cancel()
@@ -322,7 +329,6 @@ final class AppViewModel: ObservableObject {
 
             let selectionAtStart = id
             currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
-                // Respect cancellation between stages
                 if Task.isCancelled { return }
                 let raw = (try? index.readLine(at: selectionAtStart, maxBytes: nil)) ?? ""
                 if Task.isCancelled { return }

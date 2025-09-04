@@ -196,8 +196,8 @@ struct SidebarView: View {
                 viewModel.runSidebarSearchDebounced()
             }
         }
-        .onChange(of: viewModel.selectedRowID) { _ in
-            Task { _ = await viewModel.updateTreeForSelectedRow() }
+        .onChange(of: viewModel.selectedRowID) { newID in
+            Task { _ = await viewModel.updateTreeForSelectedRow(selectedID: newID) }
         }
     }
 }
