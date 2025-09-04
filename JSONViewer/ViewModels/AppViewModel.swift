@@ -309,43 +309,65 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     func updateTreeForSelectedRow() async -> Bool {
+        // Only valid for JSONL mode with a concrete selection
         guard mode == .jsonl, let id = selectedRowID else { return false }
 
+        // Cancel any in-flight compute and start a fresh one for the current selection
         currentComputeTask?.cancel()
-        guard let index = jsonlIndex else {
-            // Pasted JSONL
-            guard let row = selectedRow else { return false }
-            let raw = row.raw
+
+        // File-backed JSONL
+        if let index = jsonlIndex {
+            // Only proceed if the line slice is available (during indexing this may be false)
+            guard index.sliceRange(forLine: id) != nil else { return false }
+
+            let selectionAtStart = id
             currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                // Respect cancellation between stages
+                if Task.isCancelled { return }
+                let raw = (try? index.readLine(at: selectionAtStart, maxBytes: nil)) ?? ""
+                if Task.isCancelled { return }
+
                 let data = raw.data(using: .utf8) ?? Data()
                 let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
                 let tree = try? JSONTreeBuilder.build(from: data)
+
                 await MainActor.run {
                     guard let self else { return }
+                    // Drop stale results: only apply if selection and index are still current
+                    guard !Task.isCancelled,
+                          self.mode == .jsonl,
+                          self.selectedRowID == selectionAtStart,
+                          self.jsonlIndex === index else { return }
+
                     self.prettyJSON = pretty
                     self.currentTreeRoot = tree
                     self.presentation = .tree
+                    if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
                 }
             }
             return true
         }
 
-        // File-backed: only proceed if line slice is available
-        guard let _ = index.sliceRange(forLine: id) else {
-            return false
-        }
-
+        // Pasted JSONL
+        guard let row = selectedRow else { return false }
+        let raw = row.raw
+        let selectionAtStart = id
         currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
-            let raw = (try? index.readLine(at: id, maxBytes: nil)) ?? ""
+            if Task.isCancelled { return }
             let data = raw.data(using: .utf8) ?? Data()
             let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
             let tree = try? JSONTreeBuilder.build(from: data)
             await MainActor.run {
                 guard let self else { return }
+                // Drop stale results: only apply if selection is still the same and we're still in JSONL paste mode
+                guard !Task.isCancelled,
+                      self.mode == .jsonl,
+                      self.jsonlIndex == nil,
+                      self.selectedRowID == selectionAtStart else { return }
+
                 self.prettyJSON = pretty
                 self.currentTreeRoot = tree
                 self.presentation = .tree
-                if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
             }
         }
         return true

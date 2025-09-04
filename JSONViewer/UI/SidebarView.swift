@@ -76,6 +76,7 @@ struct SidebarView: View {
                                     ForEach(filtered, id: \.self) { i in
                                         SidebarRowView(viewModel: viewModel, id: i)
                                             .id(i)
+                                            .tag(i) // Ensure List selection binding uses this row id
                                             .onAppear {
                                                 if let last = filtered.last, i == last { isAtBottom = true }
                                             }
@@ -87,6 +88,7 @@ struct SidebarView: View {
                                     ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
                                         SidebarRowView(viewModel: viewModel, id: i)
                                             .id(i)
+                                            .tag(i) // Ensure List selection binding uses this row id
                                             .onAppear {
                                                 if i == viewModel.jsonlRowCount - 1 { isAtBottom = true }
                                             }
@@ -137,6 +139,7 @@ struct SidebarView: View {
                                 }
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())
+                                .tag(row.id) // Ensure selection binding uses the row's id
                                 .onAppear {
                                     if let last = filteredRows.last?.id, row.id == last { isAtBottom = true }
                                 }
