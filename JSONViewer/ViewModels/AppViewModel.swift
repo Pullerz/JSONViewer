@@ -57,6 +57,12 @@ final class AppViewModel: ObservableObject {
     @Published var indexingProgress: Double?
     @Published var lastUpdatedAt: Date?
     
+    // Dynamic field filtering
+    @Published var availableFields: [String: Int] = [:] // field -> count (approx)
+    @Published var selectedFieldFilters: Set<String> = []
+    private var fieldDiscoveryTask: Task<Void, Never>?
+    private var sidebarFilterDebounce: Task<Void, Never>?
+
     init() {
         // Prevent unbounded memory growth while scrolling many rows
         previewCache.countLimit = 5000
@@ -130,6 +136,13 @@ final class AppViewModel: ObservableObject {
         sidebarSearchTask = nil
         sidebarSearchDebounce?.cancel()
         sidebarSearchDebounce = nil
+        // Field filtering
+        fieldDiscoveryTask?.cancel()
+        fieldDiscoveryTask = nil
+        availableFields = [:]
+        selectedFieldFilters = []
+        sidebarFilterDebounce?.cancel()
+        sidebarFilterDebounce = nil
         #if os(macOS)
         securityScopedURL?.stopAccessingSecurityScopedResource()
         securityScopedURL = nil
@@ -181,6 +194,8 @@ final class AppViewModel: ObservableObject {
         statusMessage = "Pasted JSONL (\(rows.count) rows shown)"
         selectedRowID = rows.first?.id
         lastUpdatedAt = Date()
+        // Build available field list from pasted rows
+        buildAvailableFieldsFromPasted()
         await updateTreeForSelectedRow()
     }
 
@@ -239,6 +254,8 @@ final class AppViewModel: ObservableObject {
         jsonlIndex = index
         indexingProgress = 0
         jsonlRowCount = 0
+        availableFields = [:]
+        selectedFieldFilters = []
         indexTask?.cancel()
         indexTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
@@ -260,6 +277,8 @@ final class AppViewModel: ObservableObject {
                             // If the selected row becomes available during indexing, update view
                             Task { _ = await self.updateTreeForSelectedRow() }
                         }
+                        // Kick off/continue field discovery when we see more rows
+                        self.startFieldDiscoveryIfNeeded()
                     }
                 }, shouldCancel: { Task.isCancelled })
                 await MainActor.run {
@@ -275,6 +294,8 @@ final class AppViewModel: ObservableObject {
                 }
             }
         }
+        // Also start early field discovery
+        startFieldDiscoveryIfNeeded()
     }
 
     // MARK: - JSONL utility
@@ -470,6 +491,53 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Field discovery (JSONL)
+    private func startFieldDiscoveryIfNeeded() {
+        guard mode == .jsonl, fieldDiscoveryTask == nil, let index = jsonlIndex else { return }
+        fieldDiscoveryTask = Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            var counts: [String: Int] = [:]
+            let sampleLimit = min(index.lineCount, 5000)
+            var lastPublish = CFAbsoluteTimeGetCurrent()
+            for i in 0..<sampleLimit {
+                if Task.isCancelled { return }
+                guard let line = try? index.readLine(at: i, maxBytes: nil) ?? "" else { continue }
+                if let data = line.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    for key in obj.keys {
+                        counts[key, default: 0] += 1
+                    }
+                }
+                let now = CFAbsoluteTimeGetCurrent()
+                if now - lastPublish > 0.2 {
+                    lastPublish = now
+                    let snapshot = counts
+                    await MainActor.run {
+                        // Do not overwrite if user has navigated away
+                        if self.mode == .jsonl {
+                            self.availableFields = snapshot
+                        }
+                    }
+                }
+            }
+            await MainActor.run {
+                if self.mode == .jsonl {
+                    self.availableFields = counts
+                }
+            }
+        }
+    }
+
+    private func buildAvailableFieldsFromPasted() {
+        var counts: [String: Int] = [:]
+        for row in jsonlRows {
+            guard let data = row.raw.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            for k in obj.keys { counts[k, default: 0] += 1 }
+        }
+        availableFields = counts
+    }
+
     func expandAll() {
         guard let root = currentTreeRoot else { return }
         var set: Set<String> = []
@@ -517,26 +585,26 @@ final class AppViewModel: ObservableObject {
 
     // MARK: - Sidebar filtering for file-backed JSONL
 
-    func runSidebarSearchDebounced() {
-        sidebarSearchDebounce?.cancel()
-        sidebarSearchDebounce = Task { @MainActor in
+    func runSidebarFilterDebounced() {
+        sidebarFilterDebounce?.cancel()
+        sidebarFilterDebounce = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
-            runSidebarSearch()
+            runSidebarFilter()
         }
     }
 
-    func runSidebarSearch() {
+    func runSidebarFilter() {
         sidebarSearchTask?.cancel()
         guard mode == .jsonl, let index = jsonlIndex else {
             sidebarFilteredRowIDs = nil
             return
         }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if q.isEmpty {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let selected = selectedFieldFilters
+        if q.isEmpty && selected.isEmpty {
             sidebarFilteredRowIDs = nil
             return
         }
-        let query = q.lowercased()
         let total = index.lineCount
 
         sidebarSearchTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -544,24 +612,47 @@ final class AppViewModel: ObservableObject {
             var lastPublish = CFAbsoluteTimeGetCurrent()
             for i in 0..<total {
                 if Task.isCancelled { return }
-                let line = (try? index.readLine(at: i, maxBytes: 4096)) ?? ""
-                if line.range(of: query, options: .caseInsensitive) != nil {
-                    matches.append(i)
+                guard let line = try? index.readLine(at: i, maxBytes: nil) ?? "" else { continue }
+                // Text query check
+                if !q.isEmpty && line.range(of: q, options: .caseInsensitive) == nil {
+                    continue
                 }
+                // Field selection check: require all selected fields to be present as top-level keys
+                if !selected.isEmpty {
+                    // Try to parse quickly
+                    var hasAll = true
+                    if let data = line.data(using: .utf8),
+                       let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                        for key in selected {
+                            if obj[key] == nil { hasAll = false; break }
+                        }
+                    } else {
+                        // Fallback to substring heuristic if not valid JSON
+                        for key in selected {
+                            if line.range(of: "\"\(key)\":") == nil { hasAll = false; break }
+                        }
+                    }
+                    if !hasAll { continue }
+                }
+                matches.append(i)
                 // Throttle UI updates to ~10 per second
                 let now = CFAbsoluteTimeGetCurrent()
                 if now - lastPublish > 0.1 {
                     lastPublish = now
                     await MainActor.run {
-                        if self?.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == query {
-                            self?.sidebarFilteredRowIDs = matches
+                        guard let strong = self else { return }
+                        let curQ = strong.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        if curQ == q && strong.selectedFieldFilters == selected {
+                            strong.sidebarFilteredRowIDs = matches
                         }
                     }
                 }
             }
             await MainActor.run {
-                if self?.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == query {
-                    self?.sidebarFilteredRowIDs = matches
+                guard let strong = self else { return }
+                let curQ = strong.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if curQ == q && strong.selectedFieldFilters == selected {
+                    strong.sidebarFilteredRowIDs = matches
                 }
             }
         }

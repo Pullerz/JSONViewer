@@ -4,11 +4,29 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var lastRowCount: Int = 0
     @State private var isAtBottom: Bool = false
+    @State private var showFieldFilters: Bool = true
 
     private var filteredRows: [AppViewModel.JSONLRow] {
-        if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
+        // Pasted-mode filtering
+        let q = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selected = viewModel.selectedFieldFilters
         return viewModel.jsonlRows.filter { row in
-            row.preview.localizedCaseInsensitiveContains(viewModel.searchText) || row.raw.localizedCaseInsensitiveContains(viewModel.searchText)
+            // Text match
+            let textOK = q.isEmpty || row.preview.localizedCaseInsensitiveContains(q) || row.raw.localizedCaseInsensitiveContains(q)
+            if !textOK { return false }
+            if selected.isEmpty { return true }
+            guard let data = row.raw.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                // Fallback heuristic
+                for k in selected {
+                    if row.raw.range(of: "\"\(k)\":") == nil { return false }
+                }
+                return true
+            }
+            for k in selected {
+                if obj[k] == nil { return false }
+            }
+            return true
         }
     }
 
@@ -41,6 +59,61 @@ struct SidebarView: View {
         .padding(.bottom, 8)
     }
 
+    @ViewBuilder
+    private func fieldFilterView() -> some View {
+        if viewModel.mode == .jsonl {
+            let items = viewModel.availableFields.sorted { a, b in
+                if a.value == b.value { return a.key < b.key }
+                return a.value > b.value
+            }
+            if !items.isEmpty {
+                DisclosureGroup(isExpanded: $showFieldFilters) {
+                    // Limit height to keep sidebar compact
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(items, id: \.key) { kv in
+                                let key = kv.key
+                                let count = kv.value
+                                Toggle(isOn: Binding<Bool>(
+                                    get: { viewModel.selectedFieldFilters.contains(key) },
+                                    set: { on in
+                                        if on { viewModel.selectedFieldFilters.insert(key) }
+                                        else { viewModel.selectedFieldFilters.remove(key) }
+                                        // Trigger filtering for file-backed
+                                        if viewModel.jsonlIndex != nil {
+                                            viewModel.runSidebarFilterDebounced()
+                                        }
+                                    }
+                                )) {
+                                    HStack {
+                                        Text(key)
+                                        Spacer()
+                                        Text("\(count)")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 160)
+                } label: {
+                    HStack {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                        Text("Filter by fields")
+                        Spacer()
+                        if !viewModel.selectedFieldFilters.isEmpty {
+                            Text("\(viewModel.selectedFieldFilters.count) selected")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 10) {
             // Styled, integrated search field matching tree viewer
@@ -64,6 +137,9 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
+
+            // Field filters (dynamic)
+            fieldFilterView()
 
             Group {
                 switch viewModel.mode {
@@ -176,21 +252,22 @@ struct SidebarView: View {
         .onAppear {
             lastRowCount = viewModel.jsonlRowCount
         }
-        .onChange(of: viewModel.searchText) { newVal in
+        .onChange(of: viewModel.searchText) { _ in
             if viewModel.jsonlIndex != nil {
-                if newVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    viewModel.sidebarFilteredRowIDs = nil
-                } else {
-                    viewModel.runSidebarSearchDebounced()
-                }
+                viewModel.runSidebarFilterDebounced()
             } else {
-                viewModel.sidebarFilteredRowIDs = nil
+                // Pasted mode uses local filtering; nothing to compute
+            }
+        }
+        .onChange(of: viewModel.selectedFieldFilters) { _ in
+            if viewModel.jsonlIndex != nil {
+                viewModel.runSidebarFilterDebounced()
             }
         }
         .onChange(of: viewModel.jsonlRowCount) { _ in
-            if viewModel.jsonlIndex != nil && !viewModel.searchText.isEmpty {
-                // Re-run search when new rows arrive, but debounce to avoid thrashing during indexing
-                viewModel.runSidebarSearchDebounced()
+            if viewModel.jsonlIndex != nil && (!viewModel.searchText.isEmpty || !viewModel.selectedFieldFilters.isEmpty) {
+                // Re-run filter when new rows arrive, but debounce to avoid thrashing during indexing
+                viewModel.runSidebarFilterDebounced()
             }
         }
         .onChange(of: viewModel.selectedRowID) { _ in
