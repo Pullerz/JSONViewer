@@ -5,13 +5,17 @@ import AppKit
 #endif
 
 struct AppShellView: View {
-    @StateObject private var viewModel = AppViewModel()
-        #if os(macOS)
+    @StateObject private var tabs = TabsViewModel()
+    #if os(macOS)
     @State private var nsWindow: NSWindow?
     #endif
     @State private var isInspectorVisible: Bool = false
     @State private var isAISidebarVisible: Bool = false
     @Environment(\.openWindow) private var openWindow
+
+    private var viewModel: AppViewModel {
+        tabs.selected
+    }
 
     private var displayText: String {
         viewModel.prettyJSON
@@ -47,7 +51,7 @@ struct AppShellView: View {
 
                     if viewModel.mode != .none {
                         CommandBarContainer(
-                            mode: $viewModel.commandMode,
+                            mode: Binding(get: { viewModel.commandMode }, set: { viewModel.commandMode = $0 }),
                             placeholder: viewModel.commandMode == .jq
                                 ? "jq filter (e.g. .items | length)"
                                 : "Use natural language to search or transform"
@@ -76,10 +80,38 @@ struct AppShellView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 420, ideal: 680, max: .infinity)
-            .navigationTitle(viewModel.fileURL?.lastPathComponent ?? "Prism")
+            .navigationTitle(windowTitle)
         }
-        
         .toolbar {
+            // Tabs in the top bar
+            ToolbarItemGroup {
+                HStack(spacing: 8) {
+                    Picker("", selection: Binding(get: { tabs.selectedIndex }, set: { tabs.selectedIndex = $0 })) {
+                        ForEach(Array(tabs.tabs.enumerated()), id: \.offset) { idx, vm in
+                            Text(vm.fileURL?.lastPathComponent ?? "Untitled")
+                                .tag(idx)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .help("Switch document tab")
+
+                    Button {
+                        _ = tabs.newTab()
+                        withAnimation {
+                            isInspectorVisible = false
+                            isAISidebarVisible = false
+                        }
+                        #if os(macOS)
+                        nsWindow?.makeFirstResponder(nil)
+                        #endif
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .help("New Tab")
+                }
+            }
+
+            // Existing controls
             ToolbarItemGroup {
                 Button {
                     openFile()
@@ -95,7 +127,7 @@ struct AppShellView: View {
                 }
                 .help("Paste JSON/JSONL from clipboard (⌘V)")
 
-                Picker("", selection: $viewModel.presentation) {
+                Picker("", selection: Binding(get: { viewModel.presentation }, set: { viewModel.presentation = $0 })) {
                     Image(systemName: "text.alignleft").tag(AppViewModel.ContentPresentation.text)
                     Image(systemName: "list.bullet.indent").tag(AppViewModel.ContentPresentation.tree)
                 }
@@ -156,7 +188,7 @@ struct AppShellView: View {
             // Show native title (file name when available)
             nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = viewModel.fileURL
-            nsWindow?.title = viewModel.fileURL?.lastPathComponent ?? "Prism"
+            nsWindow?.title = windowTitle
             // Ensure no text field is focused by default so Cmd+V pastes into the viewer.
             nsWindow?.makeFirstResponder(nil)
             WindowRegistry.shared.register(viewModel)
@@ -168,6 +200,11 @@ struct AppShellView: View {
             // Drain any pending open requests queued by the AppDelegate (e.g., Dock drops).
             OpenRequests.shared.drain(into: viewModel) { id in
                 openWindow(id: id)
+            }
+            // If there are multiple pending, open them in new tabs in this window.
+            while OpenRequests.shared.pendingCount > 0 {
+                let vm = tabs.newTab()
+                _ = OpenRequests.shared.deliverNext(to: vm)
             }
             // Ensure no UI element steals focus on first launch so Cmd+V pastes into viewer.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -182,6 +219,14 @@ struct AppShellView: View {
             nsWindow?.titleVisibility = .visible
             nsWindow?.representedURL = newURL
             nsWindow?.title = newURL?.lastPathComponent ?? "Prism"
+        }
+        .onChange(of: tabs.selectedIndex) { _ in
+            // Update window chrome when switching tabs
+            nsWindow?.titleVisibility = .visible
+            nsWindow?.representedURL = viewModel.fileURL
+            nsWindow?.title = windowTitle
+            // Do not keep inspector/AI sidebar open automatically across tabs unless desired
+            // Leave their visibility as-is for now.
         }
         #endif
     }
