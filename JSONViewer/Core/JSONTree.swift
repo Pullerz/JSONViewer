@@ -85,28 +85,89 @@ extension JSONTreeNode {
         }
     }
 
+    /// Full JSON string for this node.
     func asJSONString() -> String {
+        return asJSONString(limit: nil)
+    }
+
+    /// JSON string for this node, optionally truncated to a maximum number of characters.
+    /// When truncated, the returned string will end with "… (truncated)" and may not be valid JSON.
+    func asJSONString(limit: Int?) -> String {
+        var output = ""
+        var remaining = limit ?? Int.max
+        var truncated = false
+
+        writeJSON(into: &output, remaining: &remaining, truncated: &truncated)
+
+        if truncated, limit != nil {
+            output.append("… (truncated)")
+        }
+        return output
+    }
+
+    private func writeJSON(into output: inout String, remaining: inout Int, truncated: inout Bool) {
+        if truncated || remaining <= 0 {
+            truncated = true
+            return
+        }
+
         if let scalar {
             switch scalar {
-            case .string(let s): return "\"\(s)\""
-            case .number(let d): return String(d)
-            case .bool(let b): return b ? "true" : "false"
-            case .null: return "null"
+            case .string(let s):
+                append("\"\(s)\"", to: &output, remaining: &remaining, truncated: &truncated)
+            case .number(let d):
+                append(String(d), to: &output, remaining: &remaining, truncated: &truncated)
+            case .bool(let b):
+                append(b ? "true" : "false", to: &output, remaining: &remaining, truncated: &truncated)
+            case .null:
+                append("null", to: &output, remaining: &remaining, truncated: &truncated)
             }
-        } else if let children {
-            if children.first?.key?.hasPrefix("[") == true {
-                // array
-                let inner = children.map { $0.asJSONString() }.joined(separator: ", ")
-                return "[\(inner)]"
+            return
+        }
+
+        if let children {
+            let isArray = children.first?.key?.hasPrefix("[") == true
+            if isArray {
+                append("[", to: &output, remaining: &remaining, truncated: &truncated)
+                for (index, child) in children.enumerated() {
+                    if truncated || remaining <= 0 { break }
+                    if index > 0 {
+                        append(", ", to: &output, remaining: &remaining, truncated: &truncated)
+                    }
+                    child.writeJSON(into: &output, remaining: &remaining, truncated: &truncated)
+                }
+                append("]", to: &output, remaining: &remaining, truncated: &truncated)
             } else {
-                let inner = children.map { child in
+                append("{", to: &output, remaining: &remaining, truncated: &truncated)
+                for (index, child) in children.enumerated() {
+                    if truncated || remaining <= 0 { break }
+                    if index > 0 {
+                        append(", ", to: &output, remaining: &remaining, truncated: &truncated)
+                    }
                     let key = child.key ?? ""
-                    return "\"\(key)\": \(child.asJSONString())"
-                }.joined(separator: ", ")
-                return "{\(inner)}"
+                    append("\"\(key)\": ", to: &output, remaining: &remaining, truncated: &truncated)
+                    child.writeJSON(into: &output, remaining: &remaining, truncated: &truncated)
+                }
+                append("}", to: &output, remaining: &remaining, truncated: &truncated)
             }
         } else {
-            return "null"
+            append("null", to: &output, remaining: &remaining, truncated: &truncated)
+        }
+    }
+
+    private func append(_ string: String, to output: inout String, remaining: inout Int, truncated: inout Bool) {
+        if truncated || remaining <= 0 {
+            truncated = true
+            return
+        }
+        if string.count <= remaining {
+            output.append(string)
+            remaining -= string.count
+        } else {
+            let index = string.index(string.startIndex, offsetBy: remaining)
+            output.append(contentsOf: string[string.startIndex..<index])
+            remaining = 0
+            truncated = true
         }
     }
 

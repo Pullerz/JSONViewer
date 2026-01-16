@@ -24,7 +24,9 @@
 			<key>CFBundleTypeName</key>
 			<string>JSON Document</string>
 			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.json</string>
@@ -34,7 +36,9 @@
 			<key>CFBundleTypeName</key>
 			<string>JSON Lines Document</string>
 			<key>CFBundleTypeRole</key>
-			<string>Viewer</string>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>org.jsonlines.jsonl</string>
@@ -53,15 +57,20 @@
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.text</string>
+				<string>public.data</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
 					<string>jsonl</string>
+					<string>ndjson</string>
 				</array>
 				<key>public.mime-type</key>
-				<string>application/x-ndjson</string>
+				<array>
+					<string>application/x-ndjson</string>
+					<string>application/jsonl</string>
+				</array>
 			</dict>
 		</dict>
 	</array>

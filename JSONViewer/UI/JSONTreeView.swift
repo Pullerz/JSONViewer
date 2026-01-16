@@ -1,32 +1,13 @@
 import SwiftUI
 
-struct JSONTreeView: View {
-    @ObservedObject var viewModel: AppViewModel
-    let root: JSONTreeNode?
-    var onSelect: (JSONTreeNode) -> Void
-    @FocusState private var findFocused: Bool
-
-    // Cache heavy rows computation so arbitrary AppViewModel changes (e.g. typing in AI/JQ)
-    // don't trigger an expensive full-tree traversal on every keystroke.
-    @State private var cachedRows: [RowItem] = []
-    @State private var lastRootId: UUID? = nil
-    @State private var lastQuery: String = ""
-    @State private var lastExpanded: Set<String> = []
-    @State private var queryDebounce: Task<Void, Never>? = nil
-
-    private struct RowItem: Identifiable, Hashable {
-        let id: UUID = UUID()
-        let node: JSONTreeNode
-        let depth: Int
-    }
-
-    private func nodeMatches(_ node: JSONTreeNode, query: String) -> Bool {
+private struct JSONTreeRowComputation {
+    static func nodeMatches(_ node: JSONTreeNode, query: String) -> Bool {
         if query.isEmpty { return true }
         let text = "\(node.displayKey) \(node.previewValue) \(node.path)".lowercased()
         return text.contains(query)
     }
 
-    private func ancestorPathsForMatches(root: JSONTreeNode, query: String) -> Set<String> {
+    static func ancestorPathsForMatches(root: JSONTreeNode, query: String) -> Set<String> {
         var result: Set<String> = []
         guard !query.isEmpty else { return result }
         let q = query.lowercased()
@@ -50,19 +31,16 @@ struct JSONTreeView: View {
         return result
     }
 
-    private func recomputeRows() {
-        guard let root else {
-            cachedRows = []
-            lastRootId = nil
-            return
-        }
-        let q = viewModel.treeSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    static func buildRows(root: JSONTreeNode,
+                          query: String,
+                          expandedPaths: Set<String>) -> [(node: JSONTreeNode, depth: Int)] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let autoExpand = ancestorPathsForMatches(root: root, query: q)
-        let expansionSet = viewModel.expandedPaths.union(autoExpand)
+        let expansionSet = expandedPaths.union(autoExpand)
 
-        var rows: [RowItem] = []
+        var rows: [(JSONTreeNode, Int)] = []
         func walk(_ node: JSONTreeNode, depth: Int) {
-            rows.append(RowItem(node: node, depth: depth))
+            rows.append((node, depth))
             if let children = node.children, expansionSet.contains(node.path) {
                 for c in children {
                     walk(c, depth: depth + 1)
@@ -72,15 +50,79 @@ struct JSONTreeView: View {
         walk(root, depth: 0)
 
         if q.isEmpty {
-            cachedRows = rows
+            return rows
         } else {
-            cachedRows = rows.filter { item in
-                nodeMatches(item.node, query: q) || autoExpand.contains(item.node.path)
+            return rows.filter { item in
+                nodeMatches(item.0, query: q) || autoExpand.contains(item.0.path)
             }
         }
-        lastRootId = root.id
-        lastQuery = q
-        lastExpanded = viewModel.expandedPaths
+    }
+}
+
+struct JSONTreeView: View {
+    @ObservedObject var viewModel: AppViewModel
+    let root: JSONTreeNode?
+    var onSelect: (JSONTreeNode) -> Void
+    @FocusState private var findFocused: Bool
+
+    // Cache heavy rows computation so arbitrary AppViewModel changes (e.g. typing in AI/JQ)
+    // don't trigger an expensive full-tree traversal on every keystroke.
+    @State private var cachedRows: [RowItem] = []
+    @State private var lastRootId: UUID? = nil
+    @State private var lastQuery: String = ""
+    @State private var lastExpanded: Set<String> = []
+    @State private var queryDebounce: Task<Void, Never>? = nil
+
+    private struct RowItem: Identifiable, Hashable {
+        let id: UUID = UUID()
+        let node: JSONTreeNode
+        let depth: Int
+    }
+
+    // MARK: - Row computation (off-main-thread)
+
+    private func recomputeRows(searchDriven: Bool) {
+        guard let root else {
+            cachedRows = []
+            lastRootId = nil
+            return
+        }
+
+        let query = viewModel.treeSearchQuery
+        let expanded = viewModel.expandedPaths
+
+        #if DEBUG
+        let rootIdDescription = root.id.uuidString
+        print("[Tree] recomputeRows(searchDriven: \(searchDriven)) start, rootId=\(rootIdDescription), selectedRowID=\(String(describing: viewModel.selectedRowID))")
+        #endif
+
+        queryDebounce?.cancel()
+        queryDebounce = Task.detached(priority: .userInitiated) {
+            if searchDriven {
+                // Small debounce so rapid typing doesn't recompute the whole tree on every keystroke.
+                try? await Task.sleep(nanoseconds: 120_000_000)
+            }
+            if Task.isCancelled { return }
+
+            let tuples = JSONTreeRowComputation.buildRows(root: root, query: query, expandedPaths: expanded)
+            if Task.isCancelled { return }
+
+            await MainActor.run {
+                cachedRows = tuples.map { RowItem(node: $0.node, depth: $0.depth) }
+                lastRootId = root.id
+                lastQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                lastExpanded = expanded
+                #if DEBUG
+                let firstPreview: String
+                if let first = cachedRows.first {
+                    firstPreview = "\(first.node.displayKey): \(String(first.node.previewValue.prefix(80)))"
+                } else {
+                    firstPreview = "<no rows>"
+                }
+                print("[Tree] recomputeRows applied, rootId=\(root.id.uuidString), rows=\(cachedRows.count), first=\(firstPreview)")
+                #endif
+            }
+        }
     }
 
     private func toggle(_ node: JSONTreeNode) {
@@ -103,7 +145,17 @@ struct JSONTreeView: View {
                             TextField("Find in tree", text: $viewModel.treeSearchQuery)
                                 .textFieldStyle(.plain)
                                 .focused($findFocused)
+                                .onSubmit {
+                                    // Release focus on Enter
+                                    findFocused = false
+                                }
                         }
+                        #if os(macOS)
+                        .onExitCommand {
+                            // Release focus on Escape
+                            findFocused = false
+                        }
+                        #endif
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
                         .background(
@@ -178,24 +230,27 @@ struct JSONTreeView: View {
                     findFocused = true
                 }
                 .onChange(of: viewModel.treeSearchQuery) { _ in
-                    // Recompute rows when the shared query changes.
-                    recomputeRows()
+                    // Recompute rows when the shared query changes (debounced, off-main-thread).
+                    recomputeRows(searchDriven: true)
                 }
                 .onChange(of: viewModel.expandedPaths) { _ in
-                    recomputeRows()
-                }
-                .onChange(of: root?.id) { _ in
-                    recomputeRows()
+                    recomputeRows(searchDriven: false)
                 }
                 .onAppear {
                     // Do not focus search by default
                     findFocused = false
-                    // Ensure root has an entry to control expansion
-                    if viewModel.expandedPaths.isEmpty {
-                        viewModel.expandedPaths.insert("")
-                    }
                     // Build rows for current query
-                    recomputeRows()
+                    #if DEBUG
+                    if let r = root {
+                        print("[Tree] onAppear with rootId=\\(r.id.uuidString), selectedRowID=\\(String(describing: viewModel.selectedRowID))")
+                    } else {
+                        print("[Tree] onAppear with no root")
+                    }
+                    #endif
+                    recomputeRows(searchDriven: false)
+                }
+                .onDisappear {
+                    queryDebounce?.cancel()
                 }
             } else {
                 VStack(spacing: 6) {
@@ -220,20 +275,23 @@ private struct JSONTreeRowView: View {
     var onToggle: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .center, spacing: 4) {
             // Indentation
-            Color.clear.frame(width: CGFloat(depth) * 14, height: 0)
+            Color.clear.frame(width: CGFloat(depth) * 14, height: 1)
 
+            // Chevron toggle with large hit area
             if node.children != nil {
                 Button(action: onToggle) {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.space, modifiers: []) // allows quick toggle when focused
             } else {
                 // Align with disclosure space
-                Color.clear.frame(width: 14, height: 0)
+                Color.clear.frame(width: 28, height: 1)
             }
 
             Text(node.displayKey)

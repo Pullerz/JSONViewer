@@ -50,34 +50,66 @@ final class AppViewModel: ObservableObject {
     private let previewCache = NSCache<NSNumber, NSString>()
     private let previewSemaphore = DispatchSemaphore(value: 4)
 
-    @Published var selectedRowID: Int?
+    @Published var selectedRowID: Int? {
+        didSet {
+            // Only drive JSONL recomputation off selection changes when in JSONL mode.
+            guard mode == .jsonl, selectedRowID != oldValue else { return }
+
+            // CRITICAL: Capture the value NOW, before the Task starts.
+            // Reading self.selectedRowID inside the Task creates a race condition
+            // where rapid clicks cause the wrong row to be displayed.
+            let capturedID = selectedRowID
+            selectionVersion += 1
+            let capturedVersion = selectionVersion
+
+            #if DEBUG
+            print("[JSONL] selectedRowID didSet: id=\(String(describing: capturedID)), version=\(capturedVersion), old=\(String(describing: oldValue))")
+            #endif
+
+            // Cancel any in-flight task immediately
+            currentComputeTask?.cancel()
+
+            Task { [weak self] in
+                guard let self else { return }
+
+                // Check if this is still the latest selection before doing expensive work
+                guard self.selectionVersion == capturedVersion else {
+                    #if DEBUG
+                    print("[JSONL] skipping stale selection version=\(capturedVersion), current=\(self.selectionVersion)")
+                    #endif
+                    return
+                }
+
+                #if DEBUG
+                print("[JSONL] selectedRowID didSet Task: updateTreeForSelectedRow(selectedID: \(String(describing: capturedID)), version=\(capturedVersion))")
+                #endif
+                _ = await self.updateTreeForSelectedRow(selectedID: capturedID, selectionVersion: capturedVersion)
+            }
+        }
+    }
+
+    // Version counter to track selection ordering and prevent out-of-order updates
+    private var selectionVersion: Int = 0
     @Published var isLoading: Bool = false
     @Published var statusMessage: String?
     @Published var searchText: String = ""
     @Published var indexingProgress: Double?
     @Published var lastUpdatedAt: Date?
     
+    // Original JSON document data (for restoring full view after jq filters)
+    private var originalJSONData: Data? = nil
+    
     init() {
-        // Prevent unbounded memory growth while scrolling many rows
-        previewCache.countLimit = 5000
+        // Prevent unbounded memory growth while scrolling many rows.
+        // Increased from 5000 to 10000 to reduce repeated file reads for large files,
+        // since we now have FileHandle pooling that makes reads much cheaper.
+        previewCache.countLimit = 10000
+        // Also set a memory limit to avoid excessive memory usage (50MB max)
+        previewCache.totalCostLimit = 50 * 1024 * 1024
     }
     
-    // Command bar
-    @Published var commandMode: CommandBarView.Mode = .jq
+    // Command bar (jq filter)
     @Published var commandText: String = ""
-    @Published var aiStatus: String = ""
-
-    // AI conversation
-    struct AIMessage: Identifiable, Hashable {
-        let id = UUID()
-        let role: String // "user" | "assistant"
-        let text: String
-        let date: Date = Date()
-    }
-    @Published var aiMessages: [AIMessage] = []
-    @Published var aiStreamingText: String? = nil
-    @Published var aiIsStreaming: Bool = false
-    private var aiStreamTask: Task<Void, Never>?
 
     // Sidebar (JSONL) search
     @Published var sidebarFilteredRowIDs: [Int]? = nil
@@ -89,6 +121,7 @@ final class AppViewModel: ObservableObject {
     private var indexTask: Task<Void, Never>?
     private var fileWatcher: FileWatcher?
     private var fileChangeDebounce: Task<Void, Never>?
+    private var inspectorSelectionID: Int = 0
     #if os(macOS)
     private var securityScopedURL: URL?
     #endif
@@ -97,6 +130,8 @@ final class AppViewModel: ObservableObject {
         guard let id = selectedRowID else { return nil }
         return jsonlRows.first(where: { $0.id == id })
     }
+
+    
 
     func clear() {
         mode = .none
@@ -130,6 +165,8 @@ final class AppViewModel: ObservableObject {
         sidebarSearchTask = nil
         sidebarSearchDebounce?.cancel()
         sidebarSearchDebounce = nil
+        inspectorSelectionID = 0
+        originalJSONData = nil
         #if os(macOS)
         securityScopedURL?.stopAccessingSecurityScopedResource()
         securityScopedURL = nil
@@ -161,6 +198,8 @@ final class AppViewModel: ObservableObject {
                     self.presentation = .tree
                     self.mode = .json
                     self.statusMessage = "Pasted JSON"
+                    self.originalJSONData = data
+                    if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
                 }
             }
             return
@@ -221,6 +260,7 @@ final class AppViewModel: ObservableObject {
                             self.mode = .json
                             self.statusMessage = "Loaded JSON (\(self.formattedByteCount(data.count)))"
                             if self.expandedPaths.isEmpty { self.expandedPaths.insert("") } // default expand root
+                            self.originalJSONData = data
                         }
                     }
                 } catch {
@@ -246,30 +286,41 @@ final class AppViewModel: ObservableObject {
                     Task { @MainActor in
                         self?.indexingProgress = progress
                         self?.statusMessage = "Indexing… \(Int(progress * 100))%"
-                        self?.lastUpdatedAt = Date()
                     }
                 }, onUpdate: { count in
+                    // Only update the row count during indexing - don't trigger tree builds
+                    // Tree will be built once at the end when indexing completes
                     Task { @MainActor in
-                        guard let self else { return }
-                        self.jsonlRowCount = count
-                        self.lastUpdatedAt = Date()
-                        if self.selectedRowID == nil && count > 0 {
-                            self.selectedRowID = 0
-                            Task { _ = await self.updateTreeForSelectedRow() }
-                        } else if let sel = self.selectedRowID, sel < count {
-                            // If the selected row becomes available during indexing, update view
-                            Task { _ = await self.updateTreeForSelectedRow() }
-                        }
+                        self?.jsonlRowCount = count
                     }
                 }, shouldCancel: { Task.isCancelled })
+
+                // Indexing complete - now select row 0 and build the tree ONCE
                 await MainActor.run {
-                    self?.statusMessage = "Indexed \(index.lineCount) rows"
-                    self?.lastUpdatedAt = Date()
+                    guard let self else { return }
+                    #if DEBUG
+                    print("[JSONL] index build completed: lineCount=\(index.lineCount)")
+                    #endif
+                    self.jsonlRowCount = index.lineCount
+                    self.statusMessage = "Indexed \(index.lineCount) rows"
+                    self.lastUpdatedAt = Date()
+                    self.indexingProgress = nil
+
+                    // Auto-select first row and build tree only after indexing is fully complete
+                    if self.selectedRowID == nil && index.lineCount > 0 {
+                        self.selectedRowID = 0
+                    } else if self.selectedRowID != nil {
+                        // Refresh tree for already-selected row
+                        Task { _ = await self.updateTreeForSelectedRow() }
+                    }
                 }
             } catch {
                 // Treat cancellation as non-fatal (likely caused by quick file close/open or replacement)
                 if (error as? CancellationError) == nil {
                     await MainActor.run {
+                        #if DEBUG
+                        print("[JSONL] index build failed: \(error.localizedDescription)")
+                        #endif
                         self?.statusMessage = "Failed to index JSONL"
                     }
                 }
@@ -310,70 +361,167 @@ final class AppViewModel: ObservableObject {
     @discardableResult
     func updateTreeForSelectedRow() async -> Bool {
         // Forward to the explicit-id variant using the current selection.
-        return await updateTreeForSelectedRow(selectedID: selectedRowID)
+        // Capture the current version for external callers (e.g., file refresh).
+        return await updateTreeForSelectedRow(selectedID: selectedRowID, selectionVersion: selectionVersion)
     }
 
     // Explicit-id variant used by views to avoid any timing race on reading selectedRowID.
+    // The selectionVersion parameter allows callers to pass the version at the time of selection,
+    // preventing out-of-order updates when rapid selections occur.
     @discardableResult
-    func updateTreeForSelectedRow(selectedID: Int?) async -> Bool {
+    func updateTreeForSelectedRow(selectedID: Int?, selectionVersion startVersion: Int) async -> Bool {
+        #if DEBUG
+        print("[JSONL] updateTreeForSelectedRow(entry): selectedID=\(String(describing: selectedID)), version=\(startVersion), mode=\(mode)")
+        #endif
         // Only valid for JSONL mode with a concrete selection
-        guard mode == .jsonl, let id = selectedID else { return false }
+        guard mode == .jsonl, let id = selectedID else {
+            #if DEBUG
+            print("[JSONL] updateTreeForSelectedRow: early-exit (mode=\(mode), selectedID=\(String(describing: selectedID)))")
+            #endif
+            return false
+        }
+
+        // Early exit if selection has already changed
+        guard selectionVersion == startVersion else {
+            #if DEBUG
+            print("[JSONL] updateTreeForSelectedRow: stale version \(startVersion), current \(selectionVersion)")
+            #endif
+            return false
+        }
 
         // Cancel any in-flight compute and start a fresh one for the current selection
+        if currentComputeTask != nil {
+            #if DEBUG
+            print("[JSONL] updateTreeForSelectedRow: cancelling previous compute task for id=\(id)")
+            #endif
+        }
         currentComputeTask?.cancel()
 
         // File-backed JSONL
         if let index = jsonlIndex {
             // Only proceed if the line slice is available (during indexing this may be false)
-            guard index.sliceRange(forLine: id) != nil else { return false }
+            let hasSlice = index.sliceRange(forLine: id) != nil
+            #if DEBUG
+            print("[JSONL] updateTreeForSelectedRow(file-backed): id=\(id), version=\(startVersion), hasSlice=\(hasSlice), rowCount=\(jsonlRowCount)")
+            #endif
+            guard hasSlice else { return false }
 
             let selectionAtStart = id
             currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                #if DEBUG
+                print("[JSONL] compute task started for id=\(selectionAtStart), version=\(startVersion)")
+                #endif
+
+                // Check version before I/O
+                guard let self else { return }
                 if Task.isCancelled { return }
+                guard await self.selectionVersion == startVersion else {
+                    #if DEBUG
+                    print("[JSONL] compute task aborting (pre-IO): stale version \(startVersion)")
+                    #endif
+                    return
+                }
+
                 let raw = (try? index.readLine(at: selectionAtStart, maxBytes: nil)) ?? ""
+                #if DEBUG
+                print("[JSONL] readLine completed for id=\(selectionAtStart), rawLength=\(raw.count)")
+                #endif
+
+                // Check version after I/O
                 if Task.isCancelled { return }
+                guard await self.selectionVersion == startVersion else {
+                    #if DEBUG
+                    print("[JSONL] compute task aborting (post-IO): stale version \(startVersion)")
+                    #endif
+                    return
+                }
 
                 let data = raw.data(using: .utf8) ?? Data()
                 let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
                 let tree = try? JSONTreeBuilder.build(from: data)
 
                 await MainActor.run {
-                    guard let self else { return }
-                    // Drop stale results: only apply if selection and index are still current
-                    guard !Task.isCancelled,
-                          self.mode == .jsonl,
-                          self.selectedRowID == selectionAtStart,
-                          self.jsonlIndex === index else { return }
+                    let currentSel = self.selectedRowID
+                    let currentVersion = self.selectionVersion
+                    let isModeJSONL = self.mode == .jsonl
+                    let sameIndex = self.jsonlIndex === index
+                    let notCancelled = !Task.isCancelled
+                    #if DEBUG
+                    print("[JSONL] compute task finishing for id=\(selectionAtStart): currentSel=\(String(describing: currentSel)), version=\(startVersion)/\(currentVersion), notCancelled=\(notCancelled), isModeJSONL=\(isModeJSONL), sameIndex=\(sameIndex)")
+                    #endif
+                    // Drop stale results: only apply if selection, version, and index are still current
+                    guard notCancelled,
+                          isModeJSONL,
+                          currentVersion == startVersion,
+                          currentSel == selectionAtStart,
+                          sameIndex else { return }
 
                     self.prettyJSON = pretty
                     self.currentTreeRoot = tree
                     self.presentation = .tree
                     if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
+                    #if DEBUG
+                    let snippet = pretty.replacingOccurrences(of: "\n", with: " ")
+                    let preview = String(snippet.prefix(120))
+                    print("[JSONL] applied tree for id=\(selectionAtStart), preview=\(preview)")
+                    #endif
                 }
             }
             return true
         }
 
         // Pasted JSONL
-        guard let row = selectedRow else { return false }
+        guard let row = selectedRow else {
+            #if DEBUG
+            print("[JSONL] updateTreeForSelectedRow(pasted): no selectedRow for id=\(id)")
+            #endif
+            return false
+        }
         let raw = row.raw
         let selectionAtStart = id
         currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+            #if DEBUG
+            print("[JSONL] compute task started (pasted) for id=\(selectionAtStart), version=\(startVersion)")
+            #endif
+
+            guard let self else { return }
             if Task.isCancelled { return }
+
+            // Check version before expensive work
+            guard await self.selectionVersion == startVersion else {
+                #if DEBUG
+                print("[JSONL] compute task aborting (pasted pre-compute): stale version \(startVersion)")
+                #endif
+                return
+            }
+
             let data = raw.data(using: .utf8) ?? Data()
             let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? raw
             let tree = try? JSONTreeBuilder.build(from: data)
+
             await MainActor.run {
-                guard let self else { return }
+                let currentSel = self.selectedRowID
+                let currentVersion = self.selectionVersion
+                let isModeJSONL = self.mode == .jsonl
+                let isFileBacked = self.jsonlIndex != nil
+                let notCancelled = !Task.isCancelled
+                #if DEBUG
+                print("[JSONL] compute task finishing (pasted) for id=\(selectionAtStart): currentSel=\(String(describing: currentSel)), version=\(startVersion)/\(currentVersion), notCancelled=\(notCancelled), isModeJSONL=\(isModeJSONL), isFileBacked=\(isFileBacked)")
+                #endif
                 // Drop stale results: only apply if selection is still the same and we're still in JSONL paste mode
-                guard !Task.isCancelled,
-                      self.mode == .jsonl,
-                      self.jsonlIndex == nil,
-                      self.selectedRowID == selectionAtStart else { return }
+                guard notCancelled,
+                      isModeJSONL,
+                      currentVersion == startVersion,
+                      !isFileBacked,
+                      currentSel == selectionAtStart else { return }
 
                 self.prettyJSON = pretty
                 self.currentTreeRoot = tree
                 self.presentation = .tree
+                if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
+                #if DEBUG
+                print("[JSONL] applied tree (pasted) for id=\(selectionAtStart)")
+                #endif
             }
         }
         return true
@@ -381,6 +529,12 @@ final class AppViewModel: ObservableObject {
 
     func didSelectTreeNode(_ node: JSONTreeNode) {
         inspectorPath = node.path.isEmpty ? "(root)" : node.path
+        inspectorSelectionID &+= 1
+        let selectionID = inspectorSelectionID
+        #if DEBUG
+        print("[Inspector] didSelectTreeNode: path=\(inspectorPath), selectionID=\(selectionID), isScalar=\(node.scalar != nil)")
+        #endif
+
         if let scalar = node.scalar {
             switch scalar {
             case .string(let s):
@@ -393,7 +547,37 @@ final class AppViewModel: ObservableObject {
                 inspectorValueText = "null"
             }
         } else {
-            inspectorValueText = node.asJSONString()
+            // For large objects/arrays, compute the JSON text off the main actor and
+            // truncate very deep structures to keep the UI responsive.
+            inspectorValueText = "Loading…"
+            let nodeSnapshot = node
+            Task.detached(priority: .userInitiated) { [weak self] in
+                #if DEBUG
+                print("[Inspector] task started: selectionID=\(selectionID), path=\(nodeSnapshot.path)")
+                #endif
+                let text = nodeSnapshot.asJSONString(limit: 200_000)
+                #if DEBUG
+                print("[Inspector] task finished compute: selectionID=\(selectionID), textLength=\(text.count)")
+                #endif
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    guard let self else { return }
+                    #if DEBUG
+                    print("[Inspector] main apply check: currentSelectionID=\(self.inspectorSelectionID), taskSelectionID=\(selectionID), inspectorPath=\(self.inspectorPath)")
+                    #endif
+                    // Only apply the result if the selection hasn't changed.
+                    guard self.inspectorSelectionID == selectionID else {
+                        #if DEBUG
+                        print("[Inspector] skipping stale inspector update for selectionID=\(selectionID)")
+                        #endif
+                        return
+                    }
+                    self.inspectorValueText = text
+                    #if DEBUG
+                    print("[Inspector] applied inspector text for selectionID=\(selectionID)")
+                    #endif
+                }
+            }
         }
         #if os(macOS)
         NSPasteboard.general.clearContents()
@@ -404,10 +588,10 @@ final class AppViewModel: ObservableObject {
         #if os(macOS)
         let text: String
         switch mode {
-        case .json:
-            text = presentation == .text ? prettyJSON : (currentTreeRoot?.asJSONString() ?? prettyJSON)
-        case .jsonl:
-            text = presentation == .text ? prettyJSON : (currentTreeRoot?.asJSONString() ?? prettyJSON)
+        case .json, .jsonl:
+            // Always use the pretty-printed representation for copy to keep this fast,
+            // regardless of whether the user is in text or tree presentation.
+            text = prettyJSON
         case .none:
             text = ""
         }
@@ -450,6 +634,7 @@ final class AppViewModel: ObservableObject {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             self.prettyJSON = pretty
                             self.currentTreeRoot = tree
+                            self.originalJSONData = data
                         }
                         // If inspector path refers to a node, refresh its value too
                         self.refreshInspectorFromCurrentPath()
@@ -642,8 +827,14 @@ final class AppViewModel: ObservableObject {
     private func currentDocumentDataForJQ() throws -> (Data, JQInputKind) {
         switch mode {
         case .json:
-            let json = currentTreeRoot?.asJSONString() ?? prettyJSON
-            return (json.data(using: .utf8) ?? Data(), .json)
+            if let data = originalJSONData {
+                return (data, .json)
+            } else {
+                // Fall back to the pretty-printed text representation rather than
+                // rebuilding from the tree to avoid walking very large structures.
+                let data = prettyJSON.data(using: .utf8) ?? Data()
+                return (data, .json)
+            }
         case .jsonl:
             if let url = fileURL, FileManager.default.fileExists(atPath: url.path) {
                 let data = try Data(contentsOf: url, options: [.mappedIfSafe])
@@ -657,6 +848,35 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func clearJQFilter() {
+        switch mode {
+        case .json:
+            guard let data = originalJSONData else { return }
+            isLoading = false
+            statusMessage = nil
+            currentComputeTask?.cancel()
+            currentComputeTask = Task.detached(priority: .userInitiated) { [weak self] in
+                let pretty = (try? JSONPrettyPrinter.pretty(data: data)) ?? (String(data: data, encoding: .utf8) ?? "")
+                let tree = try? JSONTreeBuilder.build(from: data)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.prettyJSON = pretty
+                    self.currentTreeRoot = tree
+                    self.presentation = .tree
+                    if self.expandedPaths.isEmpty { self.expandedPaths.insert("") }
+                }
+            }
+        case .jsonl:
+            isLoading = false
+            statusMessage = nil
+            Task {
+                _ = await self.updateTreeForSelectedRow()
+            }
+        case .none:
+            break
+        }
+    }
+
     func writeCurrentDocumentToTmp() throws -> URL {
         let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("prism-work", isDirectory: true)
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -665,8 +885,12 @@ final class AppViewModel: ObservableObject {
         let url = tmp.appendingPathComponent("\(name).\(ext)")
         switch mode {
         case .json:
-            let json = currentTreeRoot?.asJSONString() ?? prettyJSON
-            try json.data(using: .utf8)?.write(to: url)
+            if let data = originalJSONData {
+                try data.write(to: url)
+            } else {
+                let data = prettyJSON.data(using: .utf8) ?? Data()
+                try data.write(to: url)
+            }
         case .jsonl:
             if let f = fileURL, FileManager.default.fileExists(atPath: f.path) {
                 let data = try Data(contentsOf: f, options: [.mappedIfSafe])
@@ -681,252 +905,4 @@ final class AppViewModel: ObservableObject {
         return url
     }
 
-    func runAI(prompt: String) {
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard let apiKey = OpenAIClient.loadAPIKeyFromDefaultsOrEnv() else {
-            statusMessage = "Missing OpenAI API key (set in Preferences > AI or OPENAI_API_KEY env var)."
-            // Surface this in the AI sidebar so it's obvious why nothing streamed.
-            aiMessages.append(AIMessage(role: "assistant", text: "Missing OpenAI API key. Open Preferences → AI and paste your key, or set the OPENAI_API_KEY environment variable in your run scheme."))
-            aiIsStreaming = false
-            aiStreamingText = nil
-            return
-        }
-
-        aiMessages.append(AIMessage(role: "user", text: trimmed))
-        aiStreamingText = ""
-        aiIsStreaming = true
-        aiStatus = "Thinking…"
-        isLoading = true
-
-        aiStreamTask?.cancel()
-        aiStreamTask = Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            let systemPrompt = await Self.agentSystemPrompt()
-            let tools = await Self.toolSchemas()
-
-            do {
-                let model = "gpt-5"
-                try await OpenAIStreamClient.streamCreateResponse(
-                    config: .init(apiKey: apiKey, model: model, systemPrompt: systemPrompt),
-                    userText: trimmed,
-                    tools: tools
-                ) { event in
-                    Task { @MainActor in
-                        switch event {
-                        case .textDelta(let t):
-                            self.aiStreamingText = (self.aiStreamingText ?? "") + t
-                        case .requiresAction(let responseId, let calls):
-                            // Execute tools locally, then stream the continuation
-                            self.statusMessage = "AI using tools…"
-                            #if DEBUG
-                            print("[AI] requiresAction: responseId=\(responseId), calls=\(calls.map { $0.name })")
-                            #endif
-                            Task.detached(priority: .userInitiated) { [weak self] in
-                                guard let self else { return }
-                                var outputs: [OpenAIClient.ToolOutput] = []
-                                for call in calls {
-                                    #if DEBUG
-                                    print("[AI] running tool:", call.name)
-                                    if call.argumentsJSON.count < 300 {
-                                        print("[AI] tool args:", call.argumentsJSON)
-                                    } else {
-                                        print("[AI] tool args (trunc):", String(call.argumentsJSON.prefix(300)) + "…")
-                                    }
-                                    #endif
-                                    if call.name == "run_jq" {
-                                        if let json = call.argumentsJSON.data(using: .utf8),
-                                           let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-                                           let filter = dict["filter"] as? String {
-                                            do {
-                                                let (data, kind) = try await self.currentDocumentDataForJQ()
-                                                let result = try JQRunner.run(filter: filter, input: data, kind: kind)
-                                                let output = result.stdout
-                                                outputs.append(.init(toolCallId: call.id, output: output))
-                                                #if DEBUG
-                                                print("[AI] jq stdout len:", output.count)
-                                                #endif
-                                                // Do not alter the main document view from AI tool runs.
-                                                // The tool output will be summarized back in the chat by the model.
-                                            } catch {
-                                                outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
-                                                #if DEBUG
-                                                print("[AI] jq error:", error.localizedDescription)
-                                                #endif
-                                            }
-                                        } else {
-                                            #if DEBUG
-                                            print("[AI] run_jq missing/invalid filter argument")
-                                            #endif
-                                        }
-                                    } else if call.name == "run_python" {
-                                        if let json = call.argumentsJSON.data(using: .utf8),
-                                           let dict = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
-                                           let code = dict["code"] as? String {
-                                            do {
-                                                let inputURL = try await self.writeCurrentDocumentToTmp()
-                                                let result = try PythonRunner.run(code: code, inputPath: inputURL)
-                                                let desc: [String: Any] = [
-                                                    "stdout": result.stdout,
-                                                    "stderr": result.stderr,
-                                                    "output_files": result.outputFiles.map { $0.path }
-                                                ]
-                                                let outputJSON = String(data: try JSONSerialization.data(withJSONObject: desc), encoding: .utf8) ?? "{}"
-                                                outputs.append(.init(toolCallId: call.id, output: outputJSON))
-                                                #if DEBUG
-                                                print("[AI] python stdout len:", result.stdout.count, "stderr len:", result.stderr.count, "files:", result.outputFiles.count)
-                                                #endif
-                                            } catch {
-                                                outputs.append(.init(toolCallId: call.id, output: "{\"error\":\"\(error.localizedDescription)\"}"))
-                                                #if DEBUG
-                                                print("[AI] python error:", error.localizedDescription)
-                                                #endif
-                                            }
-                                        } else {
-                                            #if DEBUG
-                                            print("[AI] run_python missing/invalid code argument")
-                                            #endif
-                                        }
-                                    } else {
-                                        #if DEBUG
-                                        print("[AI] unknown tool:", call.name)
-                                        #endif
-                                    }
-                                }
-                                do {
-                                    // Start second stream (continuation) visibly
-                                    await MainActor.run {
-                                        self.aiIsStreaming = true
-                                        if self.aiStreamingText == nil { self.aiStreamingText = "" }
-                                        self.aiStatus = "Using tools…"
-                                    }
-                                    #if DEBUG
-                                    print("[AI] submitting tool outputs count:", outputs.count, "responseId:", responseId)
-                                    #endif
-                                    try await OpenAIStreamClient.streamSubmitToolOutputs(
-                                        apiKey: apiKey,
-                                        model: model,
-                                        responseId: responseId,
-                                        toolOutputs: outputs
-                                    ) { evt in
-                                        Task { @MainActor in
-                                            switch evt {
-                                            case .textDelta(let txt):
-                                                #if DEBUG
-                                                print("[AI] submit stream textDelta len:", txt.count)
-                                                #endif
-                                                self.aiStreamingText = (self.aiStreamingText ?? "") + txt
-                                            case .completed:
-                                                #if DEBUG
-                                                print("[AI] submit stream completed")
-                                                #endif
-                                                if let text = self.aiStreamingText, !text.isEmpty {
-                                                    self.aiMessages.append(AIMessage(role: "assistant", text: text))
-                                                }
-                                                self.aiStreamingText = nil
-                                                self.aiIsStreaming = false
-                                                self.isLoading = false
-                                                self.aiStatus = ""
-                                            case .requiresAction:
-                                                // Nested tool calls not handled in this first version.
-                                                self.statusMessage = "AI requested nested tools; unsupported in this version."
-                                                #if DEBUG
-                                                print("[AI] nested requiresAction received (not handled)")
-                                                #endif
-                                            }
-                                        }
-                                    }
-                                } catch {
-                                    await MainActor.run {
-                                        self.statusMessage = "AI tool submit error: \(error.localizedDescription)"
-                                        self.aiMessages.append(AIMessage(role: "assistant", text: "AI tool submit error: \(error.localizedDescription)"))
-                                        self.aiIsStreaming = false
-                                        self.aiStreamingText = nil
-                                        self.isLoading = false
-                                        self.aiStatus = ""
-                                    }
-                                    #if DEBUG
-                                    print("[AI] submit error:", error.localizedDescription)
-                                    #endif
-                                }
-                            }
-                        case .completed:
-                            if let text = self.aiStreamingText, !text.isEmpty {
-                                self.aiMessages.append(AIMessage(role: "assistant", text: text))
-                            }
-                            self.aiStreamingText = nil
-                            self.aiIsStreaming = false
-                            self.isLoading = false
-                            self.aiStatus = ""
-                        }
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self.statusMessage = "AI error: \(error.localizedDescription)"
-                    self.aiMessages.append(AIMessage(role: "assistant", text: "AI error: \(error.localizedDescription)"))
-                    self.aiIsStreaming = false
-                    self.aiStreamingText = nil
-                    self.isLoading = false
-                    self.aiStatus = ""
-                }
-            }
-        }
-    }
-
-    func cancelAIStream() {
-        aiStreamTask?.cancel()
-        aiIsStreaming = false
-        aiStreamingText = nil
-        aiStatus = "Stopped"
-        isLoading = false
-    }
-
-    func clearAIConversation() {
-        aiMessages.removeAll()
-        aiStreamingText = nil
-        aiStatus = ""
-    }
-
-    private static func agentSystemPrompt() -> String {
-        """
-        You are Prism's data assistant embedded in a macOS JSON/JSONL viewer.
-        You can:
-        - run_jq(filter): run a jq program on the CURRENT document (JSON or JSONL). For JSONL, assume input is slurped (-s) into an array of objects. Return the jq output text to the user.
-        - run_python(code): Run a short Python 3 script against a temporary COPY of the current document located at a path passed as argv[1]; a writable output directory path is provided as argv[2]. Your script should read argv[1] and print results to stdout. If you save files to argv[2], they will be surfaced back to the user.
-
-        Always prefer run_jq for filtering/transforming JSON and JSONL. Use run_python for more complex transformations.
-        Never modify the original file; operate only on provided temp paths.
-        Respond concisely.
-        """
-    }
-
-    private static func toolSchemas() -> [[String: Any]] {
-        // Responses API expects top-level "name" for tools. Keep JSON Schema under "parameters".
-        let runJQ: [String: Any] = [
-            "type": "function",
-            "name": "run_jq",
-            "description": "Run a jq filter on the current document (JSON or slurped JSONL). Returns jq output text.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "filter": ["type": "string", "description": "jq filter, e.g. .items | length"]
-                ],
-                "required": ["filter"]
-            ]
-        ]
-        let runPy: [String: Any] = [
-            "type": "function",
-            "name": "run_python",
-            "description": "Execute Python 3 code on a temp copy of the current document. Read argv[1]; write optional outputs to argv[2]; print results to stdout.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "code": ["type": "string", "description": "Python 3 script source code"]
-                ],
-                "required": ["code"]
-            ]
-        ]
-        return [runJQ, runPy]
-    }
 }

@@ -4,6 +4,7 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var lastRowCount: Int = 0
     @State private var isAtBottom: Bool = false
+    @FocusState private var isSearchFocused: Bool
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -50,6 +51,11 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                     TextField("Search", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
+                        .onSubmit {
+                            // Release focus on Enter
+                            isSearchFocused = false
+                        }
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
@@ -61,6 +67,12 @@ struct SidebarView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
                 )
+                #if os(macOS)
+                .onExitCommand {
+                    // Release focus on Escape
+                    isSearchFocused = false
+                }
+                #endif
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -195,9 +207,6 @@ struct SidebarView: View {
                 // Re-run search when new rows arrive, but debounce to avoid thrashing during indexing
                 viewModel.runSidebarSearchDebounced()
             }
-        }
-        .onChange(of: viewModel.selectedRowID) { newID in
-            Task { _ = await viewModel.updateTreeForSelectedRow(selectedID: newID) }
         }
     }
 }
