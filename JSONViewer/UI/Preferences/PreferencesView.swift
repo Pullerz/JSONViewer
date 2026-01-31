@@ -1,23 +1,9 @@
 import SwiftUI
 
 struct PreferencesView: View {
-    @State private var selection: Int = 0
-
     var body: some View {
-        TabView(selection: $selection) {
-            AppearancePreferences()
-                .tabItem {
-                    Label("Appearance", systemImage: "paintbrush")
-                }
-                .tag(0)
-
-            AIPreferences()
-                .tabItem {
-                    Label("AI", systemImage: "brain.head.profile")
-                }
-                .tag(1)
-        }
-        .padding(.top, 8)
+        AppearancePreferences()
+            .padding(.top, 8)
     }
 }
 

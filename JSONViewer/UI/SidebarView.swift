@@ -4,6 +4,7 @@ struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var lastRowCount: Int = 0
     @State private var isAtBottom: Bool = false
+    @FocusState private var isSearchFocused: Bool
 
     private var filteredRows: [AppViewModel.JSONLRow] {
         if viewModel.searchText.isEmpty { return viewModel.jsonlRows }
@@ -50,6 +51,11 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                     TextField("Search", text: $viewModel.searchText)
                         .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
+                        .onSubmit {
+                            // Release focus on Enter
+                            isSearchFocused = false
+                        }
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
@@ -61,6 +67,12 @@ struct SidebarView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
                 )
+                #if os(macOS)
+                .onExitCommand {
+                    // Release focus on Escape
+                    isSearchFocused = false
+                }
+                #endif
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -76,6 +88,7 @@ struct SidebarView: View {
                                     ForEach(filtered, id: \.self) { i in
                                         SidebarRowView(viewModel: viewModel, id: i)
                                             .id(i)
+                                            .tag(i) // Ensure List selection binding uses this row id
                                             .onAppear {
                                                 if let last = filtered.last, i == last { isAtBottom = true }
                                             }
@@ -87,6 +100,7 @@ struct SidebarView: View {
                                     ForEach(0..<viewModel.jsonlRowCount, id: \.self) { i in
                                         SidebarRowView(viewModel: viewModel, id: i)
                                             .id(i)
+                                            .tag(i) // Ensure List selection binding uses this row id
                                             .onAppear {
                                                 if i == viewModel.jsonlRowCount - 1 { isAtBottom = true }
                                             }
@@ -137,6 +151,7 @@ struct SidebarView: View {
                                 }
                                 .padding(.vertical, 4)
                                 .contentShape(Rectangle())
+                                .tag(row.id) // Ensure selection binding uses the row's id
                                 .onAppear {
                                     if let last = filteredRows.last?.id, row.id == last { isAtBottom = true }
                                 }
@@ -192,9 +207,6 @@ struct SidebarView: View {
                 // Re-run search when new rows arrive, but debounce to avoid thrashing during indexing
                 viewModel.runSidebarSearchDebounced()
             }
-        }
-        .onChange(of: viewModel.selectedRowID) { _ in
-            Task { _ = await viewModel.updateTreeForSelectedRow() }
         }
     }
 }

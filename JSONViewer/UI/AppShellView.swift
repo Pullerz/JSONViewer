@@ -10,7 +10,6 @@ struct AppShellView: View {
     @State private var nsWindow: NSWindow?
     #endif
     @State private var isInspectorVisible: Bool = false
-    @State private var isAISidebarVisible: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     private var displayText: String {
@@ -27,7 +26,7 @@ struct AppShellView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
             HStack(spacing: 0) {
-                ZStack(alignment: .bottomLeading) {
+                VStack(spacing: 0) {
                     Group {
                         switch viewModel.presentation {
                         case .text:
@@ -39,6 +38,7 @@ struct AppShellView: View {
                                 viewModel.didSelectTreeNode(node)
                                 withAnimation { isInspectorVisible = true }
                             }
+                            .id(viewModel.currentTreeRoot?.id)
                         }
                     }
                     .animation(.easeInOut(duration: 0.2), value: viewModel.mode)
@@ -46,32 +46,31 @@ struct AppShellView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if viewModel.mode != .none {
-                        CommandBarContainer(
-                            mode: $viewModel.commandMode,
-                            placeholder: viewModel.commandMode == .jq
-                                ? "jq filter (e.g. .items | length)"
-                                : "Use natural language to search or transform"
-                        ) { text in
-                            switch viewModel.commandMode {
-                            case .jq:
+                        Divider()
+                        HStack {
+                            CommandBarContainer(
+                                text: $viewModel.commandText,
+                                placeholder: "jq filter (e.g. .items | length)"
+                            ) { text in
                                 viewModel.runJQ(filter: text)
-                            case .ai:
-                                withAnimation { isAISidebarVisible = true }
-                                viewModel.runAI(prompt: text)
+                            } onClear: {
+                                viewModel.clearJQFilter()
+                            } onResignFocus: { [weak nsWindow] in
+                                // Clear the NSWindow's first responder so focus is fully released
+                                // and keyboard shortcuts like Cmd+V work for the main view
+                                nsWindow?.makeFirstResponder(nil)
                             }
+                            Spacer()
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
                 if isInspectorVisible {
                     Divider()
                     InspectorView(viewModel: viewModel)
                         .frame(minWidth: 260, idealWidth: 320, maxWidth: 520)
                         .frame(maxHeight: .infinity)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
-                if isAISidebarVisible {
-                    Divider()
-                    AISidebarView(viewModel: viewModel)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
@@ -112,16 +111,6 @@ struct AppShellView: View {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .help(isInspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-
-                Button {
-                    withAnimation {
-                        isAISidebarVisible.toggle()
-                    }
-                } label: {
-                    Label(isAISidebarVisible ? "Hide AI Sidebar" : "Show AI Sidebar", systemImage: "bubble.right")
-                }
-                .keyboardShortcut("a", modifiers: [.command, .option])
-                .help(isAISidebarVisible ? "Hide AI Sidebar (⌥⌘A)" : "Show AI Sidebar (⌥⌘A)")
 
                 if viewModel.fileURL != nil {
                     Button {
@@ -265,19 +254,50 @@ struct AppShellView: View {
 }
 
 private struct CommandBarContainer: View {
-    @Binding var mode: CommandBarView.Mode
+    @Binding var text: String
     var placeholder: String
     var onRun: (String) -> Void
+    var onClear: () -> Void
+    var onResignFocus: (() -> Void)? = nil
 
-    @State private var textLocal: String = ""
+    // Use local state as a buffer to avoid focus entanglement with @Published properties.
+    // The direct binding to viewModel.commandText causes focus to get "stuck" because
+    // every keystroke triggers objectWillChange which propagates through the view hierarchy.
+    @State private var localText: String = ""
+    @State private var hadNonEmptyText: Bool = false
+    @State private var didInitialize: Bool = false
 
     var body: some View {
         CommandBarView(
-            mode: $mode,
-            text: $textLocal,
-            placeholder: placeholder
-        ) {
-            onRun(textLocal)
+            text: $localText,
+            placeholder: placeholder,
+            onRun: {
+                // Sync local text to viewModel on run
+                text = localText
+                onRun(localText)
+            },
+            onResignFocus: onResignFocus
+        )
+        .onAppear {
+            // Initialize local text from the binding on first appear
+            if !didInitialize {
+                localText = text
+                didInitialize = true
+            }
+        }
+        .onChange(of: text) { newValue in
+            // Sync external changes (e.g., programmatic clear) to local text
+            if localText != newValue {
+                localText = newValue
+            }
+        }
+        .onChange(of: localText) { newValue in
+            let isEmpty = newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if isEmpty && hadNonEmptyText {
+                text = ""
+                onClear()
+            }
+            hadNonEmptyText = !isEmpty
         }
     }
 }
